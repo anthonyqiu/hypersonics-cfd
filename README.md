@@ -31,6 +31,7 @@ hypersonics-cfd/
 - Keep solver outputs, restart files, logs, and derived artifacts under `studies/<campaign>/data/`.
 - Treat meshes and geometry as canonical study inputs, but keep very large binary inputs out of ordinary Git history.
 - Delete legacy backups once the managed workflow owns the active layout, instead of preserving duplicate historical copies inside the repo.
+- Render runtime configs with explicit case-folder I/O paths so solver outputs always land under `studies/<campaign>/data/cases/<case>/` even though the configs themselves live in `build/`.
 
 ## Common commands
 

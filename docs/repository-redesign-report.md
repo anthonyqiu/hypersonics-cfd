@@ -36,6 +36,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Kept the supported shock extractor implementation directly in `scripts/extract_shock_surface.py` so it is not split across wrapper and library copies.
 - Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.
 - Made shock-batch manifests store case names instead of machine-specific absolute paths.
+- Made generated SU2 configs use explicit mesh and case-output paths so solver outputs always land in `studies/<campaign>/data/cases/<case>/` even though configs are stored under `build/`.
 
 ## Current folder map
 
@@ -155,6 +156,7 @@ These sources support the core design decision used here: keep the repo as the w
   - `scripts/check_convergence.py`
 - Ran `scripts/setup_cases.py --campaign orion --case m3_coarse --case m3_fine --apply`.
 - Confirmed generated configs now point to `../../meshes/coarse.su2`.
+- Confirmed generated configs now point to explicit mesh and case-output paths.
 - Confirmed alias preservation for `m3_fine -> m3_aoa0`.
 - Dry-ran `scripts/submit_cases.py --campaign orion --case m3_coarse --resubmit`.
 - Dry-ran `scripts/submit_shock_extraction.py --study orion --case m3_coarse --rerun`.

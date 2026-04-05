@@ -24,6 +24,6 @@
 ## Notes
 
 - Case aliases such as `m3_fine -> m3_aoa0` are preserved as symlinks in `data/cases/`.
-- Mesh references in generated configs now point to `../../meshes/<name>.su2`.
+- Generated configs use explicit mesh and case-output paths, so outputs still land in each case folder even though the config files live in `build/generated-configs/`.
 - The historical `course.su2` typo is preserved as a compatibility symlink, but new configs use `coarse.su2`.
 - Legacy per-case `config.cfg` and `run.sh` files are removed during staging instead of being archived into the repo.

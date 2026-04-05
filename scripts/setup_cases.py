@@ -209,7 +209,11 @@ def resolve_mesh_reference(paths: StudyPaths, mesh_value: str) -> str:
     if mesh_path is None:
         mesh_path = candidates[1] if len(candidates) > 1 else candidates[0]
 
-    return os.path.relpath(mesh_path, paths.generated_config_dir)
+    return str(mesh_path.resolve(strict=False))
+
+
+def case_runtime_value(case_dir: Path, stem: str) -> str:
+    return str((case_dir / stem).resolve(strict=False))
 
 
 def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, Any]]:
@@ -262,6 +266,18 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                         study=study_name,
                     )
                     spec = apply_override_rules(spec, override_rules)
+
+                    case_dir = paths.case_path(str(spec["case_name"]))
+                    spec["solution_filename"] = str((case_dir / "restart_flow.dat").resolve(strict=False))
+                    spec["solution_adj_filename"] = case_runtime_value(case_dir, "solution_adj")
+                    spec["conv_filename"] = case_runtime_value(case_dir, "history")
+                    spec["restart_filename"] = case_runtime_value(case_dir, "restart_flow")
+                    spec["restart_adj_filename"] = case_runtime_value(case_dir, "restart_adj")
+                    spec["volume_filename"] = case_runtime_value(case_dir, "flow")
+                    spec["volume_adj_filename"] = case_runtime_value(case_dir, "adjoint")
+                    spec["grad_objfunc_filename"] = case_runtime_value(case_dir, "of_grad.dat")
+                    spec["surface_filename"] = case_runtime_value(case_dir, "surface_flow")
+                    spec["surface_adj_filename"] = case_runtime_value(case_dir, "surface_adjoint")
 
                     spec["job_name"] = str(spec["case_name"])
                     spec["case_description"] = (
