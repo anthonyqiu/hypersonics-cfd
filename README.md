@@ -7,8 +7,7 @@ Reusable workflows for hypersonic CFD campaigns, with study definitions in Git a
 ```text
 hypersonics-cfd/
   docs/                     # design notes and migration reports
-  scripts/                  # thin command-line entrypoints
-  src/hypersonics_cfd/      # reusable Python library code
+  scripts/                  # single home for Python workflow code and shell helpers
   studies/
     orion/                  # one concrete campaign
       study.toml            # case matrix and study defaults
@@ -27,7 +26,7 @@ hypersonics-cfd/
 
 ## Design principles
 
-- Keep reusable code under `src/` and user-facing entrypoints under `scripts/`.
+- Keep the active workflow code in `scripts/` so each Python tool has one canonical home.
 - Keep study-specific metadata and canonical inputs under `studies/<campaign>/`.
 - Keep generated configs under `studies/<campaign>/build/`.
 - Keep solver outputs, restart files, logs, and derived artifacts under `studies/<campaign>/data/`.

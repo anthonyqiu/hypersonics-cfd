@@ -37,7 +37,7 @@ class StudyPaths:
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
 def get_study_paths(study_name: str = "orion") -> StudyPaths:

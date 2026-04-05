@@ -15,8 +15,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ### High-level restructuring
 
-- Moved reusable Python code from the old `orion/scripts/` folder into `src/hypersonics_cfd/`.
-- Added `scripts/` wrappers so the normal user-facing commands still live in one simple place.
+- Consolidated the active Python workflow under `scripts/` so there is one canonical home for each tool instead of a wrapper layer plus a second source tree.
 - Moved the Orion case matrix to `studies/orion/study.toml`.
 - Moved shared templates to `templates/su2/` and `templates/slurm/`.
 - Moved Orion geometry into `studies/orion/geometry/`.
@@ -29,13 +28,13 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ### Functional improvements
 
-- Added a shared path model in `src/hypersonics_cfd/layout.py`.
+- Added a shared path model in `scripts/layout.py`.
 - Flattened the study path model so template paths now live directly on `StudyPaths` instead of under a nested `templates` object.
 - Made case generation study-aware instead of hard-coding the old `orion/` tree.
 - Preserved case aliases such as `m3_fine -> m3_aoa0` as managed symlinks.
 - Fixed the historical `course.su2` typo by normalizing to `coarse.su2` and leaving a compatibility symlink behind.
 - Retired the old rectangular shock extractor so the repo now supports one maintained shock-surface workflow.
-- Moved the supported shock extractor implementation to `src/hypersonics_cfd/extract_shock_surface.py` so it no longer sits behind a one-off `shock/panel.py` package layer.
+- Kept the supported shock extractor implementation directly in `scripts/extract_shock_surface.py` so it is not split across wrapper and library copies.
 - Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.
 - Made shock-batch manifests store case names instead of machine-specific absolute paths.
 
@@ -44,8 +43,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 ### Repository root
 
 - `docs/`: repo-level documentation, including this report.
-- `scripts/`: thin entrypoints for day-to-day use.
-- `src/hypersonics_cfd/`: reusable implementation code.
+- `scripts/`: the single home for the active Python workflow plus shell helpers.
 - `studies/`: campaign-specific source-controlled content.
 - `templates/`: shared SU2 and SLURM templates.
 
@@ -65,7 +63,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ## Script inventory
 
-### User-facing commands in `scripts/`
+### Active tools in `scripts/`
 
 - `setup_cases.py`: renders managed SU2 configs and maintains case aliases and cleanup.
 - `submit_cases.py`: builds or submits SLURM jobs for solver runs.
@@ -74,18 +72,9 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `check_convergence.py`: checks `history.csv` residuals against a target threshold.
 - `export_density_gradient_slice.py`: creates a lightweight density-gradient slice for inspection.
 - `pull_cluster_results.sh`: interactive local-machine helper for copying selected result files directly from cluster case folders into local case folders.
-
-### Reusable modules in `src/hypersonics_cfd/`
-
+- `case_selection.py`: shared case discovery, filtering, deduplication, and path resolution helpers.
 - `layout.py`: central study/repo path model.
-- `case_selection.py`: case discovery, filtering, deduplication, and path resolution.
-- `setup_cases.py`: case-matrix expansion, alias management, config rendering, and staging logic.
-- `submit_cases.py`: solver submission logic.
-- `submit_shock_surface.py`: shock-batch submission logic.
-- `check_convergence.py`: convergence checks.
-- `export_density_gradient_slice.py`: slice export logic.
 - `shock_geometry.py`: AoA-aligned coordinate-frame helpers used by the supported extractor.
-- `extract_shock_surface.py`: panel-guided shock extractor implementation.
 
 ## Why the new structure is better
 
@@ -95,8 +84,7 @@ The old layout mixed templates, scripts, generated configs, case outputs, logs, 
 
 The new layout gives each category one home:
 
-- source code lives in `src/`
-- runnable commands live in `scripts/`
+- workflow code lives in `scripts/`
 - shared templates live in `templates/`
 - campaign metadata lives in `studies/<campaign>/`
 - heavy outputs live in `studies/<campaign>/data/`
@@ -108,7 +96,7 @@ The old repo was effectively a single-study working directory. Reusing logic for
 
 The new layout supports multiple campaigns by design:
 
-- reusable code is no longer nested inside `orion/`
+- shared workflow code is no longer nested inside `orion/`
 - campaign-specific inputs are isolated under `studies/<campaign>/`
 - a second study can reuse the same scripts without inheriting Orion-specific paths
 
@@ -163,7 +151,7 @@ These sources support the core design decision used here: keep the repo as the w
 
 ## Verification performed
 
-- Compiled all Python modules and wrappers with `python3 -m compileall src scripts`.
+- Compiled the consolidated Python workflow with `python3 -m compileall scripts`.
 - Verified `--help` for:
   - `scripts/setup_cases.py`
   - `scripts/submit_cases.py`
@@ -185,5 +173,5 @@ These sources support the core design decision used here: keep the repo as the w
 ## Follow-on recommendations
 
 - If the repository ever needs shareable heavy data management, adopt a dedicated data layer such as DVC, object storage, or a formal CGNS export pipeline.
-- If more campaigns appear, keep campaign-specific assumptions out of `src/` until they are proven reusable.
+- If more campaigns appear, keep campaign-specific assumptions out of the shared helpers in `scripts/` until they are proven reusable.
 - If MATLAB plotting remains important, consider gradually porting selection/grouping logic into Python so analysis tools share the same case discovery layer.
