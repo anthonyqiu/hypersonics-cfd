@@ -1,0 +1,9 @@
+# Large CFD artifacts
+**/*.vtu
+
+# Mesh files
+**/*.su2
+
+# Restart/state dumps (also large in this dataset)
+**/cases/**/*.dat
+**/backups/**/*.dat

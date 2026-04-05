@@ -1,0 +1,2 @@
+slurmstepd: error: Prolog failure on node tri0397
+slurmstepd: error: *** JOB 1198918 ON tri0291 CANCELLED AT 2026-03-19T02:47:56 ***

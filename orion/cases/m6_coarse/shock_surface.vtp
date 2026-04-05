@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<VTKFile type="PolyData" version="0.1" byte_order="LittleEndian" header_type="UInt32" compressor="vtkZLibDataCompressor">
+  <PolyData>
+    <Piece NumberOfPoints="1" NumberOfVerts="1" NumberOfLines="0" NumberOfStrips="0" NumberOfPolys="0">
+      <PointData Scalars="Density">
+        <DataArray type="Float64" Name="Density" format="binary" RangeMin="4.48945951461792" RangeMax="4.48945951461792">
+          AQAAAACAAAAIAAAAEAAAAA==eJxjYGB4YPJV0AEACHkCWw==
+        </DataArray>
+        <DataArray type="Float64" Name="ShockSensor" format="binary" RangeMin="1576.2653737664948" RangeMax="1576.2653737664948">
+          AQAAAACAAAAIAAAAEAAAAA==eJyzZ1TZx79whgMACiQCqw==
+        </DataArray>
+        <DataArray type="Float64" Name="ShockSensorRaw" format="binary" RangeMin="6166.161122376774" RangeMax="6166.161122376774">
+          AQAAAACAAAAIAAAAEAAAAA==eJx79irAXlNshwMAE08Dlw==
+        </DataArray>
+        <DataArray type="Float64" Name="RadiusYZ" format="binary" RangeMin="0" RangeMax="0">
+          AQAAAACAAAAIAAAACwAAAA==eJxjYIAAAAAIAAE=
+        </DataArray>
+        <DataArray type="Int64" Name="SpiralStep" format="binary" RangeMin="0" RangeMax="0">
+          AQAAAACAAAAIAAAACwAAAA==eJxjYIAAAAAIAAE=
+        </DataArray>
+        <DataArray type="Int64" Name="ShellLayer" format="binary" RangeMin="0" RangeMax="0">
+          AQAAAACAAAAIAAAACwAAAA==eJxjYIAAAAAIAAE=
+        </DataArray>
+        <DataArray type="Int64" Name="BinI" format="binary" RangeMin="26" RangeMax="26">
+          AQAAAACAAAAIAAAACwAAAA==eJyTYoAAAADYABs=
+        </DataArray>
+        <DataArray type="Int64" Name="BinJ" format="binary" RangeMin="26" RangeMax="26">
+          AQAAAACAAAAIAAAACwAAAA==eJyTYoAAAADYABs=
+        </DataArray>
+        <DataArray type="Int64" Name="LineIndex" format="binary" RangeMin="329" RangeMax="329">
+          AQAAAACAAAAIAAAADAAAAA==eJzzZGQAAwACVwBL
+        </DataArray>
+      </PointData>
+      <CellData>
+      </CellData>
+      <Points>
+        <DataArray type="Float64" Name="Points" NumberOfComponents="3" format="binary" RangeMin="0.71" RangeMax="0.71">
+          AQAAAACAAAAYAAAAEwAAAA==eJzbIdf6OnDHs/0MaAAAY5YE9Q==
+          <InformationKey name="L2_NORM_RANGE" location="vtkDataArray" length="2">
+            <Value index="0">
+              0.71
+            </Value>
+            <Value index="1">
+              0.71
+            </Value>
+          </InformationKey>
+        </DataArray>
+      </Points>
+      <Verts>
+        <DataArray type="Int64" Name="connectivity" format="binary" RangeMin="0" RangeMax="0">
+          AQAAAACAAAAIAAAACwAAAA==eJxjYIAAAAAIAAE=
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="binary" RangeMin="1" RangeMax="1">
+          AQAAAACAAAAIAAAACwAAAA==eJxjZIAAAAAQAAI=
+        </DataArray>
+      </Verts>
+      <Lines>
+        <DataArray type="Int64" Name="connectivity" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+      </Lines>
+      <Strips>
+        <DataArray type="Int64" Name="connectivity" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+      </Strips>
+      <Polys>
+        <DataArray type="Int64" Name="connectivity" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="binary" RangeMin="1e+299" RangeMax="-1e+299">
+          AAAAAACAAAAAAAAA
+        </DataArray>
+      </Polys>
+    </Piece>
+  </PolyData>
+</VTKFile>

@@ -1,0 +1,37 @@
+
+scontrol show job 1249695
+JobId=1249695 JobName=shock_m1.5_aoa0
+   UserId=anthonyy(3152141) GroupId=anthonyy(3152141) MCS_label=N/A
+   Priority=727173 Nice=0 Account=rrg-jphickey QOS=normal
+   JobState=COMPLETING Reason=None Dependency=(null)
+   Requeue=0 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0
+   RunTime=00:00:01 TimeLimit=18:00:00 TimeMin=N/A
+   SubmitTime=2026-03-29T05:29:52 EligibleTime=2026-03-29T05:29:52
+   AccrueTime=2026-03-29T05:29:52
+   StartTime=2026-03-29T05:30:44 EndTime=2026-03-29T05:30:45 Deadline=N/A
+   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-03-29T05:30:44 Scheduler=Main
+   Partition=compute AllocNode:Sid=tri-login01:535238
+   ReqNodeList=(null) ExcNodeList=(null)
+   NodeList=tri1222
+   BatchHost=tri1222
+   NumNodes=1 NumCPUs=192 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*
+   ReqTRES=cpu=1,mem=767000M,node=1,billing=1
+   AllocTRES=cpu=192,mem=767000M,node=1,billing=192
+   Socks/Node=* NtasksPerN:B:S:C=1:0:*:* CoreSpec=*
+   MinCPUsNode=1 MinMemoryNode=767000M MinTmpDiskNode=0
+   Features=(null) DelayBoot=00:00:00
+   OverSubscribe=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)
+   Command=/scratch/anthonyy/reentry/orion/config/run_extract_shock_surface.sh
+   SubmitLine=SBATCH --comment /opt/slurm/bin/sbatch --export=NONE --get-user-env --job-name shock_m1.5_aoa0 --nodes 1 --ntasks-per-node 1 --cpus-per-task 1 --mem 0 --time 18:00:00 --account rrg-jphickey --output shock_extract_%j.out --error shock_extract_%j.err --chdir /scratch/anthonyy/reentry/orion/cases/m1.5_aoa0 /scratch/anthonyy/reentry/orion/config/run_extract_shock_surface.sh /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v4/Compiler/gcccore/python/3.11.5/bin/python3 /scratch/anthonyy/reentry/orion/cases/m1.5_aoa0 --export=NONE --get-user-env --job-name shock_m1.5_aoa0 --nodes 1 --ntasks-per-node 1 --cpus-per-task 1 --mem 0 --time 18:00:00 --account rrg-jphickey --output shock_extract_%j.out --error shock_extract_%j.err --chdir /scratch/anthonyy/reentry/orion/cases/m1.5_aoa0 /scratch/anthonyy/reentry/orion/config/run_extract_shock_surface.sh /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v4/Compiler/gcccore/python/3.11.5/bin/python3 /scratch/anthonyy/reentry/orion/cases/m1.5_aoa0
+   WorkDir=/scratch/anthonyy/reentry/orion/cases/m1.5_aoa0
+   Comment=/opt/slurm/bin/sbatch --export=NONE --get-user-env --job-name shock_m1.5_aoa0 --nodes 1 --ntasks-per-node 1 --cpus-per-task 1 --mem 0 --time 18:00:00 --account rrg-jphickey --output shock_extract_%j.out --error shock_extract_%j.err --chdir /scratch/anthonyy/reentry/orion/cases/m1.5_aoa0 /scratch/anthonyy/reentry/orion/config/run_extract_shock_surface.sh /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v4/Compiler/gcccore/python/3.11.5/bin/python3 /scratch/anthonyy/reentry/orion/cases/m1.5_aoa0
+   StdErr=/scratch/anthonyy/reentry/orion/cases/m1.5_aoa0/shock_extract_1249695.err
+   StdIn=/dev/null
+   StdOut=/scratch/anthonyy/reentry/orion/cases/m1.5_aoa0/shock_extract_1249695.out
+   TresPerTask=cpu=1
+
+sacct -j 1249695
+JobID           JobName    Account    Elapsed  MaxVMSize     MaxRSS  SystemCPU    UserCPU ExitCode 
+------------ ---------- ---------- ---------- ---------- ---------- ---------- ---------- -------- 
+1249695      shock_m1.+ rrg-jphic+   00:00:00                         00:00:00   00:00:00      0:0 
+
