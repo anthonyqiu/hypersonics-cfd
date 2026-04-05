@@ -13,7 +13,7 @@ hypersonics-cfd/
       study.toml            # case matrix and study defaults
       geometry/             # canonical CAD/profile inputs
       meshes/               # study meshes (kept local, not in Git history)
-      analysis/             # MATLAB helpers and digitization assets
+      analysis/             # MATLAB helpers and small study notes
       data/                 # case folders and outputs (ignored by Git)
       build/                # generated configs and manifests (ignored by Git)
     ellipsoids/             # placeholder for the next campaign

@@ -7,7 +7,7 @@
 - `study.toml`: the editable case matrix, defaults, aliases, and overrides.
 - `geometry/`: canonical geometry inputs used to define the campaign.
 - `meshes/`: Orion mesh files used by generated SU2 configs.
-- `analysis/`: non-production helpers such as MATLAB plotting and digitization metadata. See `analysis/README.md`.
+- `analysis/`: non-production helpers such as MATLAB plotting and lightweight study notes. See `analysis/README.md`.
 - `build/generated-configs/`: rendered SU2 configs for managed cases. Generated at runtime.
 - `build/manifests/`: generated batch manifests, especially for shock extraction jobs.
 - `data/cases/`: solver outputs grouped by case name.
