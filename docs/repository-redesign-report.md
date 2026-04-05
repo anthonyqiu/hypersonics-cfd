@@ -67,7 +67,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 - `setup_cases.py`: renders managed SU2 configs and maintains case aliases and cleanup.
 - `submit_cases.py`: builds or submits SLURM jobs for solver runs.
-- `submit_shock_surface.py`: builds or submits SLURM jobs for the panel shock extractor.
+- `submit_shock_extraction.py`: builds or submits SLURM jobs for the panel shock extractor.
 - `extract_shock_surface.py`: runs the supported panel-based 3D shock-surface extractor.
 - `check_convergence.py`: checks `history.csv` residuals against a target threshold.
 - `pull_cluster_results.sh`: interactive local-machine helper for copying selected result files directly from cluster case folders into local case folders.
@@ -154,14 +154,14 @@ These sources support the core design decision used here: keep the repo as the w
 - Verified `--help` for:
   - `scripts/setup_cases.py`
   - `scripts/submit_cases.py`
-  - `scripts/submit_shock_surface.py`
+  - `scripts/submit_shock_extraction.py`
   - `scripts/extract_shock_surface.py`
   - `scripts/check_convergence.py`
 - Ran `scripts/setup_cases.py --campaign orion --case m3_coarse --case m3_fine --apply`.
 - Confirmed generated configs now point to `../../meshes/coarse.su2`.
 - Confirmed alias preservation for `m3_fine -> m3_aoa0`.
 - Dry-ran `scripts/submit_cases.py --campaign orion --case m3_coarse --resubmit`.
-- Dry-ran `scripts/submit_shock_surface.py --study orion --case m3_coarse --rerun`.
+- Dry-ran `scripts/submit_shock_extraction.py --study orion --case m3_coarse --rerun`.
 - Ran `scripts/check_convergence.py --study orion m3_coarse` and `m1.5_coarse`.
 - Ran `scripts/extract_shock_surface.py --study orion m3_coarse`.
 - Checked `templates/slurm/run_shock_extraction_batch.sh` and `templates/slurm/run_su2_case.sh` usage output.

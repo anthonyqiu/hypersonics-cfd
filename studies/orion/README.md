@@ -21,7 +21,7 @@
 1. Edit `study.toml`.
 2. Render configs with `python3 ../../scripts/setup_cases.py --campaign orion --apply`.
 3. Submit solver runs with `python3 ../../scripts/submit_cases.py --campaign orion ...`.
-4. Submit shock extraction with `python3 ../../scripts/submit_shock_surface.py --study orion ...`.
+4. Submit shock extraction with `python3 ../../scripts/submit_shock_extraction.py --study orion ...`.
 5. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout after setting `LOCAL_CASES_DIR`.
 
 ## Notes

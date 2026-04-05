@@ -37,7 +37,7 @@ def load_submit_defaults(study_file: Path) -> tuple[str, str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Dry-run or submit overnight shock-surface extraction jobs."
+        description="Dry-run or submit overnight shock-extraction jobs."
     )
     parser.add_argument(
         "--study",
@@ -179,7 +179,7 @@ def main() -> int:
     paths.ensure_runtime_dirs()
 
     print("\n╔══════════════════════════════════════════════╗")
-    print("║   Shock Surface SLURM Submitter             ║")
+    print("║   Shock Extraction SLURM Submitter          ║")
     print("╚══════════════════════════════════════════════╝")
     print(f"Study: {paths.study_name}")
     print(f"Run script: {paths.run_shock_batch_script}")

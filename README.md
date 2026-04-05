@@ -50,7 +50,7 @@ python3 scripts/submit_cases.py --campaign orion --case m3_coarse
 Dry-run shock extraction batch submissions:
 
 ```bash
-python3 scripts/submit_shock_surface.py --study orion --case m6_aoa24
+python3 scripts/submit_shock_extraction.py --study orion --case m6_aoa24
 ```
 
 Pull selected results directly from the cluster to a local machine:
