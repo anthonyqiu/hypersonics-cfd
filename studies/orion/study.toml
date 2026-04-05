@@ -40,20 +40,6 @@ fine = "fine.su2"
 medium = "medium.su2"
 coarse = "coarse.su2"
 
-[artifacts.small_outputs]
-include = [
-  "history.csv",
-  "shock.csv",
-  "shock_gradient.csv",
-  "shock_pressure.csv",
-  "shock_surface.csv",
-  "shock_surface.vtp",
-  "shock_surface_panel.csv",
-  "shock_surface_panel.vtp",
-  "shock_surface_rectangular.csv",
-  "shock_surface_rectangular.vtp",
-]
-
 [generation.studies.aoa]
 mach_profiles = ["m1.5", "m3", "m6", "m9"]
 aoas = [0, 15, 24, 32, 40, 50, 60]

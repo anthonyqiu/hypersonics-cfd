@@ -29,7 +29,6 @@ class StudyPaths:
     data_root: Path
     cases_dir: Path
     backups_dir: Path
-    exports_dir: Path
     templates: TemplatePaths
 
     def case_path(self, case_name: str) -> Path:
@@ -45,7 +44,6 @@ class StudyPaths:
         for path in (
             self.generated_config_dir,
             self.shock_manifest_dir,
-            self.exports_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -83,6 +81,5 @@ def get_study_paths(study_name: str = "orion") -> StudyPaths:
         data_root=data_root,
         cases_dir=data_root / "cases",
         backups_dir=data_root / "backups",
-        exports_dir=data_root / "exports",
         templates=templates,
     )

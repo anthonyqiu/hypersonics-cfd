@@ -4,7 +4,7 @@
 
 ## Folders
 
-- `study.toml`: the editable case matrix, defaults, aliases, and small-artifact bundle rules.
+- `study.toml`: the editable case matrix, defaults, aliases, and overrides.
 - `geometry/`: canonical geometry inputs used to define the campaign.
 - `meshes/`: Orion mesh files used by generated SU2 configs.
 - `analysis/`: non-production helpers such as MATLAB plotting and digitization metadata.
@@ -15,7 +15,6 @@
 - `build/manifests/`: generated batch manifests, especially for shock extraction jobs.
 - `data/cases/`: solver outputs grouped by case name.
 - `data/backups/`: archived case directories.
-- `data/exports/`: portable bundles of lightweight derived artifacts for local transfer.
 
 ## Managed workflow
 
@@ -23,7 +22,7 @@
 2. Render configs with `python3 ../../scripts/setup_cases.py --campaign orion --apply`.
 3. Submit solver runs with `python3 ../../scripts/submit_cases.py --campaign orion ...`.
 4. Submit shock extraction with `python3 ../../scripts/submit_shock_surface.py --study orion ...`.
-5. Bundle lightweight artifacts with `python3 ../../scripts/collect_small_outputs.py --study orion`.
+5. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout after setting `LOCAL_CASES_DIR`.
 
 ## Notes
 

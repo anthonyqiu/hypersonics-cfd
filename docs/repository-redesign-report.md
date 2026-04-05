@@ -25,7 +25,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Moved generated configs and manifests into `studies/orion/build/`.
 - Archived older case-local config/run layouts under `studies/orion/archive/legacy_case_layout/`.
 - Archived old path-specific shock-method notes under `studies/orion/docs/legacy/`.
-- Removed the compatibility-only `reentry/orion` symlink path.
+- Removed the repository layout's dependence on the compatibility-only `reentry/orion` path.
 
 ### Functional improvements
 
@@ -33,7 +33,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Made case generation study-aware instead of hard-coding the old `orion/` tree.
 - Preserved case aliases such as `m3_fine -> m3_aoa0` as managed symlinks.
 - Fixed the historical `course.su2` typo by normalizing to `coarse.su2` and leaving a compatibility symlink behind.
-- Added `scripts/collect_small_outputs.py` as a standardized way to bundle small derived outputs such as `.vtp` and `.csv` for local transfer.
+- Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.
 - Made shock-batch manifests store case names instead of machine-specific absolute paths.
 
 ## Current folder map
@@ -48,7 +48,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ### `studies/orion/`
 
-- `study.toml`: campaign defaults, profiles, aliases, overrides, and bundle rules.
+- `study.toml`: campaign defaults, profiles, aliases, and overrides.
 - `geometry/`: canonical CAD/profile inputs.
 - `meshes/`: Orion meshes used by generated configs.
 - `analysis/`: helper scripts that are useful for analysis but not part of the production pipeline.
@@ -59,7 +59,6 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `build/manifests/`: generated batch manifests.
 - `data/cases/`: heavy per-case solver outputs and derived artifacts.
 - `data/backups/`: archived case directories.
-- `data/exports/`: portable bundles of small outputs for local sync.
 
 ## Script inventory
 
@@ -72,7 +71,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `extract_shock_surface_rectangular.py`: runs the legacy rectangular extractor.
 - `check_convergence.py`: checks `history.csv` residuals against a target threshold.
 - `export_density_gradient_slice.py`: creates a lightweight density-gradient slice for inspection.
-- `collect_small_outputs.py`: copies small outputs into a portable export bundle.
+- `pull_cluster_results.sh`: interactive local-machine helper for copying selected result files directly from cluster case folders into local case folders.
 
 ### Reusable modules in `src/hypersonics_cfd/`
 
@@ -83,8 +82,6 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `submit_shock_surface.py`: shock-batch submission logic.
 - `check_convergence.py`: convergence checks.
 - `export_density_gradient_slice.py`: slice export logic.
-- `artifacts.py`: small-output bundle rules and copy logic.
-- `collect_small_outputs.py`: CLI for artifact bundling.
 - `shock_geometry.py`: AoA-aligned coordinate-frame helpers.
 - `shock/panel.py`: panel-guided shock extractor.
 - `shock/rectangular.py`: legacy rectangular extractor.
@@ -130,7 +127,7 @@ Heavy outputs and generated runtime content now live in ignored locations.
 
 ### Better support for cluster-to-local workflows
 
-Small derived outputs such as `.vtp` and `.csv` are useful to move off-cluster, but they do not need to live in Git. The new `collect_small_outputs.py` command creates a clean export bundle plus manifest under `studies/<campaign>/data/exports/`, which is easier to sync to a laptop than mining case directories ad hoc.
+Small derived outputs such as `.vtp` and `.csv` are useful to move off-cluster, but they do not need an intermediate staging area inside the repo. The new `pull_cluster_results.sh` helper copies files directly into local per-case folders, including `.vtp` shock-surface outputs, so case context stays obvious and there is no extra export-bundle workflow to maintain.
 
 ## Research and design justification
 
@@ -174,13 +171,12 @@ These sources support the core design decision used here: keep the repo as the w
   - `scripts/extract_shock_surface_rectangular.py`
   - `scripts/check_convergence.py`
   - `scripts/export_density_gradient_slice.py`
-  - `scripts/collect_small_outputs.py`
 - Ran `scripts/setup_cases.py --campaign orion --case m3_coarse --case m3_fine --apply`.
 - Confirmed generated configs now point to `../../meshes/coarse.su2`.
 - Confirmed alias preservation for `m3_fine -> m3_aoa0`.
 - Dry-ran `scripts/submit_cases.py --campaign orion --case m3_coarse`.
 - Dry-ran `scripts/submit_shock_surface.py --study orion --case m3_coarse`.
-- Ran `scripts/collect_small_outputs.py` and verified it produced a manifest-backed export bundle.
+- Verified `scripts/pull_cluster_results.sh` with `bash -n`.
 
 ## Follow-on recommendations
 

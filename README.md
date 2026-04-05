@@ -17,7 +17,7 @@ hypersonics-cfd/
       analysis/             # MATLAB helpers and digitization assets
       archive/              # archived legacy case-local layouts
       docs/                 # current and legacy study docs
-      data/                 # cases, backups, exports (ignored by Git)
+      data/                 # cases and backups (ignored by Git)
       build/                # generated configs and manifests (ignored by Git)
     ellipsoids/             # placeholder for the next campaign
   templates/
@@ -54,13 +54,13 @@ Dry-run shock extraction batch submissions:
 python3 scripts/submit_shock_surface.py --study orion --case m6_aoa24
 ```
 
-Bundle lightweight post-processing outputs for local sync:
+Pull selected results directly from the cluster to a local machine:
 
 ```bash
-python3 scripts/collect_small_outputs.py --study orion --clean
+bash scripts/pull_cluster_results.sh
 ```
 
-The bundling command mirrors small artifacts such as `history.csv`, `shock_surface.vtp`, and `shock_surface.csv` into `studies/orion/data/exports/small_outputs/` and writes a manifest for easy `rsync` or archive transfer.
+Edit `LOCAL_CASES_DIR` at the top of the script first. The remote cases path is auto-detected, but you can override `CLUSTER_CASES_DIR` if needed. It is meant to be run from a local checkout or copied to your laptop/WSL environment, not from the cluster login node.
 
 ## Documentation
 
