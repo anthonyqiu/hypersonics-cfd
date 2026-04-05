@@ -33,6 +33,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Made case generation study-aware instead of hard-coding the old `orion/` tree.
 - Preserved case aliases such as `m3_fine -> m3_aoa0` as managed symlinks.
 - Fixed the historical `course.su2` typo by normalizing to `coarse.su2` and leaving a compatibility symlink behind.
+- Retired the old rectangular shock extractor so the repo now supports one maintained shock-surface workflow.
 - Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.
 - Made shock-batch manifests store case names instead of machine-specific absolute paths.
 
@@ -51,7 +52,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `study.toml`: campaign defaults, profiles, aliases, and overrides.
 - `geometry/`: canonical CAD/profile inputs.
 - `meshes/`: Orion meshes used by generated configs.
-- `analysis/`: helper scripts that are useful for analysis but not part of the production pipeline.
+- `analysis/`: helper scripts, plotting assets, and digitization provenance that support interpretation but not production runs.
 - `archive/legacy_case_layout/`: archived legacy case-local config/run script copies.
 - `docs/`: Orion documentation.
 - `docs/legacy/`: older writeups that still reference the old one-folder layout.
@@ -67,8 +68,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `setup_cases.py`: renders managed SU2 configs and maintains case aliases and cleanup.
 - `submit_cases.py`: builds or submits SLURM jobs for solver runs.
 - `submit_shock_surface.py`: builds or submits SLURM jobs for the panel shock extractor.
-- `extract_shock_surface.py`: runs the panel-based 3D shock-surface extractor.
-- `extract_shock_surface_rectangular.py`: runs the legacy rectangular extractor.
+- `extract_shock_surface.py`: runs the supported panel-based 3D shock-surface extractor.
 - `check_convergence.py`: checks `history.csv` residuals against a target threshold.
 - `export_density_gradient_slice.py`: creates a lightweight density-gradient slice for inspection.
 - `pull_cluster_results.sh`: interactive local-machine helper for copying selected result files directly from cluster case folders into local case folders.
@@ -84,7 +84,6 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `export_density_gradient_slice.py`: slice export logic.
 - `shock_geometry.py`: AoA-aligned coordinate-frame helpers.
 - `shock/panel.py`: panel-guided shock extractor.
-- `shock/rectangular.py`: legacy rectangular extractor.
 
 ## Why the new structure is better
 
@@ -168,15 +167,18 @@ These sources support the core design decision used here: keep the repo as the w
   - `scripts/submit_cases.py`
   - `scripts/submit_shock_surface.py`
   - `scripts/extract_shock_surface.py`
-  - `scripts/extract_shock_surface_rectangular.py`
   - `scripts/check_convergence.py`
   - `scripts/export_density_gradient_slice.py`
 - Ran `scripts/setup_cases.py --campaign orion --case m3_coarse --case m3_fine --apply`.
 - Confirmed generated configs now point to `../../meshes/coarse.su2`.
 - Confirmed alias preservation for `m3_fine -> m3_aoa0`.
-- Dry-ran `scripts/submit_cases.py --campaign orion --case m3_coarse`.
-- Dry-ran `scripts/submit_shock_surface.py --study orion --case m3_coarse`.
-- Verified `scripts/pull_cluster_results.sh` with `bash -n`.
+- Dry-ran `scripts/submit_cases.py --campaign orion --case m3_coarse --resubmit`.
+- Dry-ran `scripts/submit_shock_surface.py --study orion --case m3_coarse --rerun`.
+- Ran `scripts/check_convergence.py --study orion m3_coarse` and `m1.5_coarse`.
+- Ran `scripts/export_density_gradient_slice.py --study orion m3_coarse`.
+- Ran `scripts/extract_shock_surface.py --study orion m3_coarse`.
+- Checked `templates/slurm/run_shock_extraction_batch.sh` and `templates/slurm/run_su2_case.sh` usage output.
+- Verified `scripts/pull_cluster_results.sh` with `bash -n`; a live `ssh/scp` session was not exercised here because host-trust setup is local-machine specific.
 
 ## Follow-on recommendations
 

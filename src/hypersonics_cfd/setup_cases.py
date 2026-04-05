@@ -353,6 +353,8 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
 
     if alias_of:
         generated_cleanup = remove_if_exists(generated_cfg)
+        if generated_cleanup == "missing":
+            generated_cleanup = "not-needed"
         alias_status = ensure_alias_symlink(case_dir, paths.case_path(alias_of))
         return {
             "case_name": case_name,

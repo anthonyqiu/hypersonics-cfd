@@ -7,7 +7,7 @@
 - `study.toml`: the editable case matrix, defaults, aliases, and overrides.
 - `geometry/`: canonical geometry inputs used to define the campaign.
 - `meshes/`: Orion mesh files used by generated SU2 configs.
-- `analysis/`: non-production helpers such as MATLAB plotting and digitization metadata.
+- `analysis/`: non-production helpers such as MATLAB plotting and digitization metadata. See `analysis/README.md`.
 - `archive/legacy_case_layout/`: preserved copies of old case-local `config.cfg` and `run.sh` files.
 - `docs/`: study documentation.
 - `docs/legacy/`: pre-refactor notes that still describe the old `orion/` layout.

@@ -37,8 +37,6 @@ declare -a SURFACE_FILES=(
     "shock_surface.vtp"
     "shock_surface_panel.csv"
     "shock_surface_panel.vtp"
-    "shock_surface_rectangular.csv"
-    "shock_surface_rectangular.vtp"
 )
 
 declare -a LIGHTWEIGHT_FILES=(
@@ -65,8 +63,6 @@ declare -a PRIMARY_FILES=(
 declare -a REMOTE_CASE_CANDIDATES=(
     "/scratch/${CLUSTER_USER}/hypersonics-cfd/studies/orion/data/cases"
     "/home/${CLUSTER_USER}/links/scratch/hypersonics-cfd/studies/orion/data/cases"
-    "/home/${CLUSTER_USER}/links/scratch/reentry/orion/studies/orion/data/cases"
-    "/home/${CLUSTER_USER}/links/scratch/reentry/orion/cases"
 )
 
 die() {
