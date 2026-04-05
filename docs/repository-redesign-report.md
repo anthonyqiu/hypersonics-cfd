@@ -30,10 +30,12 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 ### Functional improvements
 
 - Added a shared path model in `src/hypersonics_cfd/layout.py`.
+- Flattened the study path model so template paths now live directly on `StudyPaths` instead of under a nested `templates` object.
 - Made case generation study-aware instead of hard-coding the old `orion/` tree.
 - Preserved case aliases such as `m3_fine -> m3_aoa0` as managed symlinks.
 - Fixed the historical `course.su2` typo by normalizing to `coarse.su2` and leaving a compatibility symlink behind.
 - Retired the old rectangular shock extractor so the repo now supports one maintained shock-surface workflow.
+- Moved the supported shock extractor implementation to `src/hypersonics_cfd/extract_shock_surface.py` so it no longer sits behind a one-off `shock/panel.py` package layer.
 - Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.
 - Made shock-batch manifests store case names instead of machine-specific absolute paths.
 
@@ -82,8 +84,8 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `submit_shock_surface.py`: shock-batch submission logic.
 - `check_convergence.py`: convergence checks.
 - `export_density_gradient_slice.py`: slice export logic.
-- `shock_geometry.py`: AoA-aligned coordinate-frame helpers.
-- `shock/panel.py`: panel-guided shock extractor.
+- `shock_geometry.py`: AoA-aligned coordinate-frame helpers used by the supported extractor.
+- `extract_shock_surface.py`: panel-guided shock extractor implementation.
 
 ## Why the new structure is better
 

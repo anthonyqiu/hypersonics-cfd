@@ -94,7 +94,7 @@ def build_sbatch_command(paths: StudyPaths, spec: dict[str, object], case_dir: P
         "solver_%j.err",
         "--chdir",
         str(case_dir),
-        str(paths.templates.run_su2_case),
+        str(paths.run_case_script),
         str(generated_cfg),
     ]
 
@@ -260,7 +260,7 @@ def main() -> int:
     print()
     mode = "submitted" if args.submit else "planned"
     print(f"Study: {paths.study_name}")
-    print(f"Summary: {mode}={planned}, skipped={skipped}, run_script={paths.templates.run_su2_case}")
+    print(f"Summary: {mode}={planned}, skipped={skipped}, run_script={paths.run_case_script}")
     return 0
 
 

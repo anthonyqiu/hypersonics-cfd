@@ -43,7 +43,7 @@ def load_toml(path: Path) -> dict[str, Any]:
 
 def load_case_setup(paths: StudyPaths) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
     matrix = load_toml(paths.study_file)
-    template_text = paths.templates.su2_base.read_text(encoding="utf-8")
+    template_text = paths.su2_template.read_text(encoding="utf-8")
     case_specs = expand_cases(paths, matrix)
     case_specs = apply_alias_map(case_specs, matrix, template_text)
     return matrix, template_text, case_specs

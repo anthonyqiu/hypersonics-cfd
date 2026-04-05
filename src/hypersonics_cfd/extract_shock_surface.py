@@ -12,9 +12,9 @@ import numpy as np
 import pyvista as pv
 from scipy.signal import find_peaks, savgol_filter
 
-from ..case_selection import deduplicate_case_names, choose_postprocess_cases_interactively, resolve_case_path
-from ..layout import StudyPaths, get_study_paths
-from ..shock_geometry import (
+from .case_selection import deduplicate_case_names, choose_postprocess_cases_interactively, resolve_case_path
+from .layout import StudyPaths, get_study_paths
+from .shock_geometry import (
     frame_coordinates,
     load_case_aoa_degrees,
     perpendicular_radius,

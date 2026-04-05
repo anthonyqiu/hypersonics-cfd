@@ -3,7 +3,7 @@ from _bootstrap import bootstrap
 
 bootstrap()
 
-from hypersonics_cfd.shock.panel import main
+from hypersonics_cfd.extract_shock_surface import main
 
 
 if __name__ == "__main__":
