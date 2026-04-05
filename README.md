@@ -14,7 +14,6 @@ hypersonics-cfd/
       geometry/             # canonical CAD/profile inputs
       meshes/               # study meshes (kept local, not in Git history)
       analysis/             # MATLAB helpers and digitization assets
-      docs/                 # study docs
       data/                 # case folders and outputs (ignored by Git)
       build/                # generated configs and manifests (ignored by Git)
     ellipsoids/             # placeholder for the next campaign

@@ -53,7 +53,6 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `geometry/`: canonical CAD/profile inputs.
 - `meshes/`: Orion meshes used by generated configs.
 - `analysis/`: helper scripts, plotting assets, and digitization provenance that support interpretation but not production runs.
-- `docs/`: Orion documentation.
 - `build/generated-configs/`: rendered SU2 configs for each managed case.
 - `build/manifests/`: generated batch manifests.
 - `data/cases/`: heavy per-case solver outputs and derived artifacts.
