@@ -1,8 +1,8 @@
 clear; clc; close all;
 
 %% SETTINGS
-cases_dir       = '../../data/cases';
-geometry_file   = '../../geometry/orion_profile_xy.csv';
+cases_dir       = '../data/cases';
+geometry_file   = '../geometry/orion_profile_xy.csv';
 x_shift_orion   = 0.71;
 x_shift_shock   = -0.133080166111 + 0.133080166111;
 R_stag          = 6;

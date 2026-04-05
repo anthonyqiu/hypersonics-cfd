@@ -1,7 +1,7 @@
 clear; clc; close all;
 
 %% ── SETTINGS ────────────────────────────────────────────────────────────────
-cases_dir = '../../data/cases';
+cases_dir = '../data/cases';
 
 % Residual fields to plot — must match headers in history.csv (quotes stripped)
 % SU2 typically outputs: rms[Rho], rms[RhoU], rms[RhoV], rms[RhoW], rms[RhoE]

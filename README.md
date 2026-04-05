@@ -64,4 +64,5 @@ Edit `LOCAL_CASES_DIR` at the top of the script first. The remote cases path is 
 ## Documentation
 
 - [Repository redesign report](docs/repository-redesign-report.md)
+- [Shock extraction notes](docs/shock-extraction-notes.md)
 - [Orion study guide](studies/orion/README.md)
