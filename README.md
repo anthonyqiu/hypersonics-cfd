@@ -59,7 +59,7 @@ Pull selected results directly from the cluster to a local machine:
 bash scripts/pull_cluster_results.sh
 ```
 
-Edit `LOCAL_CASES_DIR` at the top of the script first. The remote cases path is auto-detected, but you can override `CLUSTER_CASES_DIR` if needed. It is meant to be run from a local checkout or copied to your laptop/WSL environment, not from the cluster login node.
+When run from a local checkout, the script now defaults to `studies/orion/data/cases/`. You can still override the destination with `LOCAL_CASES_DIR`, and override the remote source with `CLUSTER_CASES_DIR` if needed. It is meant to be run from a local checkout or copied to your laptop/WSL environment, not from the cluster login node.
 
 ## Documentation
 

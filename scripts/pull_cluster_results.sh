@@ -16,8 +16,14 @@ CLUSTER_HOST="${CLUSTER_HOST:-trillium}"
 # Optional override. Leave empty to auto-detect the cluster cases directory.
 CLUSTER_CASES_DIR="${CLUSTER_CASES_DIR:-}"
 
-# Edit this for your laptop/WSL destination.
-LOCAL_CASES_DIR="${LOCAL_CASES_DIR:-$HOME/cfd-results/orion/cases}"
+# Default to the repo-local data folder when running from a checkout.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+DEFAULT_LOCAL_CASES_DIR="${HOME}/cfd-results/orion/cases"
+if [ -d "${REPO_ROOT}/studies/orion" ]; then
+    DEFAULT_LOCAL_CASES_DIR="${REPO_ROOT}/studies/orion/data/cases"
+fi
+LOCAL_CASES_DIR="${LOCAL_CASES_DIR:-${DEFAULT_LOCAL_CASES_DIR}}"
 # -----------------------------------------------------------------------------
 
 RED='\033[0;31m'
@@ -115,9 +121,9 @@ resolve_cluster_cases_dir() {
 
 print_header() {
     echo ""
-    echo -e "${CYAN}${BOLD}╔══════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}${BOLD}║       CFD Results Collector          ║${RESET}"
-    echo -e "${CYAN}${BOLD}╚══════════════════════════════════════╝${RESET}"
+    echo -e "${CYAN}${BOLD}========================================${RESET}"
+    echo -e "${CYAN}${BOLD}       CFD Results Collector            ${RESET}"
+    echo -e "${CYAN}${BOLD}========================================${RESET}"
     echo -e "  Cluster: ${REMOTE_HOST}"
     echo -e "  Remote:  ${REMOTE_CASES_DIR}"
     echo -e "  Local:   ${LOCAL_CASES_DIR}"
@@ -278,7 +284,7 @@ for mach in "${MACH_NUMBERS[@]}"; do
         fi
     done
 
-    echo -e "  ${CYAN}── ${mach^^} ────────────────────────────────${RESET}"
+    echo -e "  ${CYAN}-- ${mach^^} --------------------------------${RESET}"
 
     if [ ${#aoa_cases[@]} -gt 0 ]; then
         ((idx += 1))
@@ -316,7 +322,7 @@ for case_name in "${ALL_CASES[@]}"; do
     is_refinement_case "${case_name}" && all_ref+=("${case_name}")
 done
 
-echo -e "  ${CYAN}── Bulk ─────────────────────────────────${RESET}"
+echo -e "  ${CYAN}-- Bulk -----------------------------------${RESET}"
 
 if [ ${#all_aoa[@]} -gt 0 ]; then
     ((idx += 1))

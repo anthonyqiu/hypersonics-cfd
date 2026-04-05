@@ -1,8 +1,9 @@
 clear; clc; close all;
 
-%% SETTINGS
-cases_dir       = '../data/cases';
-geometry_file   = '../geometry/orion_profile_xy.csv';
+analysis_dir    = resolve_script_dir();
+study_dir       = fileparts(analysis_dir);
+cases_dir       = fullfile(study_dir, 'data', 'cases');
+geometry_file   = fullfile(study_dir, 'geometry', 'orion_profile_xy.csv');
 x_shift_orion   = 0.71;
 x_shift_shock   = -0.133080166111 + 0.133080166111;
 R_stag          = 6;
@@ -19,9 +20,16 @@ set(groot, 'defaultTextInterpreter',          'latex');
 plot_mode = dimension_selection_menu();
 
 %% DISCOVER CASES
+if ~isfolder(cases_dir)
+    error(['Cases directory not found: %s\n' ...
+        'Run pull_cluster_results.sh first so results land under studies/orion/data/cases.'], cases_dir);
+end
+
 all_cases = discover_cases(cases_dir, required_file);
 if isempty(all_cases)
-    error('No case folders with %s found in %s', required_file, cases_dir);
+    error(['No case folders with %s found in %s\n' ...
+        'Pull shock surface files with pull_cluster_results.sh using option 3, 4, 6, or 7.'], ...
+        required_file, cases_dir);
 end
 
 %% SHOW MENU
@@ -43,8 +51,6 @@ switch plot_mode
         error('Unsupported plot mode: %s', plot_mode);
 end
 
-
-%% HELPERS
 
 function plot_mode = dimension_selection_menu()
     fprintf('\nPlot shocks in:\n\n');
@@ -77,7 +83,7 @@ end
 function selected = case_selection_menu(all_cases, plot_mode)
     mach_map  = group_by_mach(all_cases);
     mach_keys = fieldnames(mach_map);
-    mach_nums = cellfun(@(m) str2double(strrep(m(2:end), 'p', '.')), mach_keys);
+    mach_nums = cellfun(@(key) mach_map.(key).M_val, mach_keys);
     [~, si]   = sort(mach_nums);
     mach_keys = mach_keys(si);
 
@@ -89,8 +95,9 @@ function selected = case_selection_menu(all_cases, plot_mode)
     fprintf('\nSelect %s case group to plot:\n\n', plot_mode);
 
     for m = 1:numel(mach_keys)
-        mach      = mach_keys{m};
-        cases     = mach_map.(mach);
+        mach_info = mach_map.(mach_keys{m});
+        mach      = mach_info.label;
+        cases     = mach_info.cases;
         aoa_cases = cases(contains(cases, '_aoa'));
         ref_cases = cases(cellfun(@(c) any(contains(c, {'_coarse', '_medium', '_fine'})), cases));
 
@@ -194,7 +201,7 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, x_shift_orion, x_shi
         x_profile = x_profile + x_shift_shock;
 
         info = parse_case_name(case_name);
-        col_k = colors(k,:);
+        col_k = colors(k, :);
 
         idx = idx + 1;
         h(idx) = plot(x_profile,  r_profile, '-', 'LineWidth', 1.4, 'Color', col_k);
@@ -236,8 +243,8 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, x_shift_orion, x_shi
     if plot_orion
         try
             geo   = readmatrix(geometry_file);
-            xg    = geo(:,1) + x_shift_orion;
-            yg    = geo(:,2);
+            xg    = geo(:, 1) + x_shift_orion;
+            yg    = geo(:, 2);
             cx    = mean(xg);
             cy    = mean(yg);
             theta = atan2(yg - cy, xg - cx);
@@ -300,7 +307,7 @@ function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion)
 
         surface_data = load_shock_surface(csv_path);
         info = parse_case_name(case_name);
-        col_k = colors(k,:);
+        col_k = colors(k, :);
         xyz_limits = expand_limits_3d(xyz_limits, surface_data.x, surface_data.y, surface_data.z);
 
         idx = idx + 1;
@@ -404,15 +411,15 @@ end
 
 function [Xg, Yg, Zg] = make_orion_surface(geometry_file)
     geo = readmatrix(geometry_file);
-    x = geo(:,1);
-    r = abs(geo(:,2));
+    x = geo(:, 1);
+    r = abs(geo(:, 2));
 
     [x_unique, ~, ic] = uniquetol(x, 1e-9, 'DataScale', 1);
     r_profile = accumarray(ic, r, [], @max);
     [x_profile, order] = sort(x_unique);
     r_profile = r_profile(order);
 
-    theta = linspace(0, 2*pi, 120);
+    theta = linspace(0, 2 * pi, 120);
     [theta_grid, x_grid] = meshgrid(theta, x_profile);
     r_grid = repmat(r_profile(:), 1, numel(theta));
 
@@ -433,8 +440,8 @@ function limits = expand_limits_3d(limits, x, y, z)
         if isempty(v)
             continue;
         end
-        limits(k,1) = min(limits(k,1), min(v));
-        limits(k,2) = max(limits(k,2), max(v));
+        limits(k, 1) = min(limits(k, 1), min(v));
+        limits(k, 2) = max(limits(k, 2), max(v));
     end
 end
 
@@ -450,7 +457,7 @@ function apply_cube_axes_3d(ax, limits, padding_fraction)
     end
 
     centers = mean(limits, 2);
-    spans = limits(:,2) - limits(:,1);
+    spans = limits(:, 2) - limits(:, 1);
     max_span = max(spans);
     if ~(isfinite(max_span) && max_span > 0)
         max_span = 1;
@@ -473,11 +480,22 @@ function mach_map = group_by_mach(cases)
             continue;
         end
 
-        mach = tok{1};
-        if ~isfield(mach_map, mach)
-            mach_map.(mach) = {};
+        mach_label = tok{1};
+        M_val = str2double(strrep(mach_label(2:end), 'p', '.'));
+        if isfinite(M_val)
+            mach_field = mach_field_name(M_val);
+            mach_label = mach_display_name(M_val);
+        else
+            mach_field = matlab.lang.makeValidName(mach_label);
         end
-        mach_map.(mach){end+1} = cases{k};
+
+        if ~isfield(mach_map, mach_field)
+            mach_map.(mach_field) = struct( ...
+                'label', mach_label, ...
+                'M_val', M_val, ...
+                'cases', {{}});
+        end
+        mach_map.(mach_field).cases{end + 1} = cases{k};
     end
 end
 
@@ -524,6 +542,10 @@ function field_name = mach_field_name(M_val)
     field_name = ['m_' regexprep(sprintf('%.12g', M_val), '[^0-9A-Za-z]', '_')];
 end
 
+function label = mach_display_name(M_val)
+    label = ['m' sprintf('%.12g', M_val)];
+end
+
 function x_out = get_billig(y_in, M_inf, R_stag)
     delta  = 0.143 * R_stag * exp(3.24 / M_inf^2);
     R_curv = 1.143 * R_stag * exp(0.54 / (M_inf - 1)^1.2);
@@ -531,4 +553,29 @@ function x_out = get_billig(y_in, M_inf, R_stag)
     x_out  = R_stag + delta ...
            - R_curv * cot(theta)^2 .* ...
              (sqrt(1 + (y_in.^2 * tan(theta)^2) / R_curv^2) - 1);
+end
+
+function analysis_dir = resolve_script_dir()
+    full_path = mfilename('fullpath');
+
+    if isempty(full_path)
+        stack = dbstack('-completenames');
+        if ~isempty(stack)
+            full_path = stack(1).file;
+        elseif usejava('desktop')
+            try
+                full_path = matlab.desktop.editor.getActiveFilename;
+            catch
+                full_path = pwd;
+            end
+        else
+            full_path = pwd;
+        end
+    end
+
+    if isfolder(full_path)
+        analysis_dir = full_path;
+    else
+        analysis_dir = fileparts(full_path);
+    end
 end
