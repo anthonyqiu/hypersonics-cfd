@@ -1,9 +1,19 @@
-# Large CFD artifacts
+# Study data and generated products live alongside the repo for convenience,
+# but they should stay out of normal Git history.
+studies/*/data/
+studies/*/build/
+
+# Meshes are canonical inputs, but the SU2 meshes in this workspace are too large
+# for ordinary Git storage. Keep their provenance in study metadata instead.
+studies/*/meshes/*.su2
+
+# Large solver artifacts that may appear elsewhere.
 **/*.vtu
+**/*.dat
 
-# Mesh files
-**/*.su2
-
-# Restart/state dumps (also large in this dataset)
-**/cases/**/*.dat
-**/backups/**/*.dat
+# Local/runtime clutter.
+**/__pycache__/
+*.py[cod]
+*.swp
+*.swo
+*.loc
