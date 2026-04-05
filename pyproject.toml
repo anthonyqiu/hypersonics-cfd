@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hypersonics-cfd"
+version = "0.1.0"
+description = "Reusable workflows for hypersonic CFD studies and case databases"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy",
+  "pyvista",
+  "scipy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

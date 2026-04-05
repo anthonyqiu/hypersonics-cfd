@@ -1,2 +1,0 @@
-/tmp/case_a
-/tmp/case_b

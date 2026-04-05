@@ -1,0 +1,178 @@
+# One editable matrix for the managed Orion cases.
+# Two study types are defined here:
+#   1) AoA campaign cases
+#   2) Mesh refinement study cases
+#
+# Edit common values once, then use ordered override rules for subsets.
+
+[study]
+name = "Orion"
+slug = "orion"
+description = "Study definition for the Orion hypersonic CFD campaign."
+
+[defaults]
+author = "Anthony Qiu"
+institution = "University of Waterloo"
+config_date = "2026-03-14"
+restart_sol = false
+output_wrt_freq = 150
+freestream_temperature = 288.15
+reynolds_length = 5
+cfl_adapt = false
+cfl_number = "0.1"
+iter = 999999
+linear_solver_iter = 100
+linear_solver_error = "1E-6"
+mg_post_smooth = "( 0, 0, 0, 0 )"
+conv_residual_minval = -8
+screen_output = "(INNER_ITER, WALL_TIME, RMS_DENSITY, RMS_MOMENTUM-X, RMS_MOMENTUM-Y, RMS_MOMENTUM-Z, RMS_ENERGY, RMS_NU_TILDE, DRAG)"
+volume_output = "MACH, PRESSURE, TEMPERATURE, DENSITY, HEAT_FLUX, Y_PLUS"
+
+job_nodes = 2
+job_ntasks_per_node = 64
+job_cpus_per_task = 1
+job_mem = 0
+job_time = "18:00:00"
+job_account = "rrg-jphickey"
+
+[meshes]
+fine = "fine.su2"
+medium = "medium.su2"
+coarse = "coarse.su2"
+
+[artifacts.small_outputs]
+include = [
+  "history.csv",
+  "shock.csv",
+  "shock_gradient.csv",
+  "shock_pressure.csv",
+  "shock_surface.csv",
+  "shock_surface.vtp",
+  "shock_surface_panel.csv",
+  "shock_surface_panel.vtp",
+  "shock_surface_rectangular.csv",
+  "shock_surface_rectangular.vtp",
+]
+
+[generation.studies.aoa]
+mach_profiles = ["m1.5", "m3", "m6", "m9"]
+aoas = [0, 15, 24, 32, 40, 50, 60]
+mesh_level = "fine"
+case_name_pattern = "m{mach}_aoa{aoa}"
+
+[generation.studies.refinement]
+mach_profiles = ["m1.5", "m3", "m6", "m9"]
+aoa = 0
+mesh_levels = ["coarse", "medium", "fine"]
+case_name_pattern = "m{mach}_{mesh_level}"
+
+[aliases]
+m3_fine = "m3_aoa0"
+m6_fine = "m6_aoa0"
+m9_fine = "m9_aoa0"
+
+[profiles.m1.5]
+mach_number = "1.5"
+reynolds_number = "1.715571333404706E08"
+cfl_adapt = true
+cfl_number = "1"
+cfl_adapt_param = "(0.5, 1.2, 0.1, 3)"
+
+[profiles.m3]
+mach_number = "3"
+reynolds_number = "3.431142666809411E08"
+cfl_adapt = true
+cfl_number = "1"
+cfl_adapt_param = "(0.5, 1.2, 0.1, 3)"
+
+[profiles.m6]
+mach_number = "6"
+reynolds_number = "6.862285333618822E08"
+cfl_adapt = true
+cfl_number = "0.03"
+cfl_adapt_param = "(0.5, 1.1, 0.05, 0.5)"
+conv_residual_minval = -5
+
+[profiles.m9]
+mach_number = "9"
+reynolds_number = "1.029342800042823E09"
+cfl_adapt = false
+cfl_number = "0.001"
+cfl_adapt_param = "(0.5, 1.1, 0.01, 0.05)"
+
+# Override rules are applied in order, top to bottom.
+# You can override any key already used by the templates.
+# Match on any combination of:
+#   match_cases      = ["m6_aoa40", "m6_aoa50"]
+#   match_study      = ["aoa", "refinement"]
+#   match_mach       = ["6", "9"]
+#   match_mesh_level = ["coarse", "medium", "fine"]
+#   match_aoa        = [40, 50, 60]
+#   match_aoa_min    = 40
+#   match_aoa_max    = 60
+#
+# Example: restart a subset of cases.
+# [[overrides]]
+# name = "restart selected Mach 6 high AoA cases"
+# match_study = ["aoa"]
+# match_mach = ["6"]
+# match_aoa = [40, 50, 60]
+# restart_sol = true
+# cfl_number = "0.02"
+#
+# Example: one exact case.
+# [[overrides]]
+# name = "longer walltime for m9_aoa60"
+# match_cases = ["m9_aoa60"]
+# restart_sol = true
+# job_time = "30:00:00"
+
+# RESTART
+# [[overrides]]
+# name = "m3 refinment restart"
+# match_study = ["refinement"]
+# match_mach = ["3"]
+# match_mesh_level = ["coarse", "medium", "fine"]
+# restart_sol = true
+
+[[overrides]]
+name = "m3 refinement restart"
+match_study = ["refinement"]
+match_mach = ["3"]
+restart_sol = true
+
+[[overrides]]
+name = "m3 aoa restart"
+match_study = ["aoa"]
+match_mach = ["3"]
+match_aoa = [0]
+restart_sol = true
+
+[[overrides]]
+name = "m6 aoa restart"
+match_study = ["aoa"]
+match_mach = ["6"]
+match_aoa = [0, 15, 24, 32, 40, 50, 60]
+restart_sol = true
+
+[[overrides]]
+name = "m6 refinement restart"
+match_study = ["refinement"]
+match_mach = ["6"]
+restart_sol = true
+
+# REFINEMENT OVERIDES
+# [[overrides]]
+# name = "m9 coarse"
+# match_study = ["refinement"]
+# match_mach = ["9"]
+# match_mesh_level = ["coarse", "medium"]
+# cfl_number = "0.0005"
+# cfl_adapt_param = "(0.2, 1.05, 0.0005, 0.005)"
+
+# [[overrides]]
+# name = "test"
+# match_study = ["refinement"]
+# match_mach = ["3"]
+# match_mesh_level = ["coarse"]
+# job_time = "00:15:00"
