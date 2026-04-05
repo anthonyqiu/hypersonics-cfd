@@ -42,7 +42,6 @@ declare -a SURFACE_FILES=(
 declare -a LIGHTWEIGHT_FILES=(
     "history.csv"
     "surface_flow.vtu"
-    "density_gradient_y0.vtu"
     "shock.csv"
     "shock_gradient.csv"
     "shock_pressure.csv"
@@ -53,7 +52,6 @@ declare -a PRIMARY_FILES=(
     "history.csv"
     "flow.vtu"
     "surface_flow.vtu"
-    "density_gradient_y0.vtu"
     "shock.csv"
     "shock_gradient.csv"
     "shock_pressure.csv"
@@ -135,8 +133,7 @@ print_file_menu() {
     echo -e "  ${YELLOW}4)${RESET} history.csv + shock surface files"
     echo -e "  ${YELLOW}5)${RESET} history.csv + flow.vtu"
     echo -e "  ${YELLOW}6)${RESET} All primary files"
-    echo -e "  ${YELLOW}7)${RESET} density_gradient_y0.vtu only"
-    echo -e "  ${YELLOW}8)${RESET} All lightweight post-processing files"
+    echo -e "  ${YELLOW}7)${RESET} All lightweight post-processing files"
     echo ""
 }
 
@@ -149,8 +146,7 @@ set_files_to_pull() {
         4) FILES_TO_PULL=("history.csv" "${SURFACE_FILES[@]}") ;;
         5) FILES_TO_PULL=("history.csv" "flow.vtu") ;;
         6) FILES_TO_PULL=("${PRIMARY_FILES[@]}") ;;
-        7) FILES_TO_PULL=("density_gradient_y0.vtu") ;;
-        8) FILES_TO_PULL=("${LIGHTWEIGHT_FILES[@]}") ;;
+        7) FILES_TO_PULL=("${LIGHTWEIGHT_FILES[@]}") ;;
         *) die "Invalid choice." ;;
     esac
 }
@@ -233,7 +229,7 @@ resolve_cluster_cases_dir
 mkdir -p "${LOCAL_CASES_DIR}"
 print_header
 print_file_menu
-read -r -p "File type [1-8]: " file_choice
+read -r -p "File type [1-7]: " file_choice
 echo ""
 set_files_to_pull "${file_choice}"
 
