@@ -31,7 +31,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Flattened the study path model so template paths now live directly on `StudyPaths` instead of under a nested `templates` object.
 - Made case generation study-aware instead of hard-coding the old `orion/` tree.
 - Preserved case aliases such as `m3_fine -> m3_aoa0` as managed symlinks.
-- Fixed the historical `course.su2` typo by normalizing to `coarse.su2` and leaving a compatibility symlink behind.
+- Normalized mesh naming to `coarse.su2` throughout the managed workflow.
 - Retired the old rectangular shock extractor so the repo now supports one maintained shock-surface workflow.
 - Kept the supported shock extractor implementation directly in `scripts/extract_shock_surface.py` so it is not split across wrapper and library copies.
 - Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.

@@ -14,7 +14,7 @@ from layout import StudyPaths, get_study_paths
 
 
 PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z0-9_]+)\s*}}")
-OLD_CASE_LOCAL_LINKS = ("mesh.su2", "fine.su2", "medium.su2", "course.su2", "coarse.su2")
+OLD_CASE_LOCAL_LINKS = ("mesh.su2", "fine.su2", "medium.su2", "coarse.su2")
 
 
 def parse_args() -> argparse.Namespace:
