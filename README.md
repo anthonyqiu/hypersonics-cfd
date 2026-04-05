@@ -14,9 +14,8 @@ hypersonics-cfd/
       geometry/             # canonical CAD/profile inputs
       meshes/               # study meshes (kept local, not in Git history)
       analysis/             # MATLAB helpers and digitization assets
-      archive/              # archived legacy case-local layouts
-      docs/                 # current and legacy study docs
-      data/                 # cases and backups (ignored by Git)
+      docs/                 # study docs
+      data/                 # case folders and outputs (ignored by Git)
       build/                # generated configs and manifests (ignored by Git)
     ellipsoids/             # placeholder for the next campaign
   templates/
@@ -31,6 +30,7 @@ hypersonics-cfd/
 - Keep generated configs under `studies/<campaign>/build/`.
 - Keep solver outputs, restart files, logs, and derived artifacts under `studies/<campaign>/data/`.
 - Treat meshes and geometry as canonical study inputs, but keep very large binary inputs out of ordinary Git history.
+- Delete legacy backups once the managed workflow owns the active layout, instead of preserving duplicate historical copies inside the repo.
 
 ## Common commands
 

@@ -8,7 +8,6 @@ Recommended contents when the study is initialized:
 - `geometry/`
 - `meshes/`
 - `analysis/`
-- `archive/`
 - `docs/`
 - `data/`
 - `build/`

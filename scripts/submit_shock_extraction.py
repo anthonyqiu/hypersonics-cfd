@@ -182,7 +182,7 @@ def main() -> int:
     print("║   Shock Extraction SLURM Submitter          ║")
     print("╚══════════════════════════════════════════════╝")
     print(f"Study: {paths.study_name}")
-    print(f"Run script: {paths.run_shock_batch_script}")
+    print(f"Run script: {paths.run_shock_extraction_script}")
     print(f"Extractor: {extract_script}")
     print(f"Python: {args.python}")
     print(
@@ -216,13 +216,13 @@ def main() -> int:
     if not runnable_case_names:
         print()
         mode = "submitted" if args.submit else "planned"
-        print(f"Summary: {mode}=0, skipped={skipped}, run_script={paths.run_shock_batch_script}")
+        print(f"Summary: {mode}=0, skipped={skipped}, run_script={paths.run_shock_extraction_script}")
         return 0
 
     manifest_path = build_manifest_path(paths.shock_manifest_dir, runnable_case_names, for_submit=args.submit)
     command = build_sbatch_command(
         paths.repo_root,
-        paths.run_shock_batch_script,
+        paths.run_shock_extraction_script,
         extract_script,
         manifest_path,
         runnable_case_names,
@@ -235,7 +235,7 @@ def main() -> int:
         print(f"Manifest: {manifest_path} (created on submit)")
         print(f"Batch contains {len(runnable_case_names)} case(s).")
         print()
-        print(f"Summary: planned=1, skipped={skipped}, run_script={paths.run_shock_batch_script}")
+        print(f"Summary: planned=1, skipped={skipped}, run_script={paths.run_shock_extraction_script}")
         return 0
 
     write_case_manifest(manifest_path, runnable_case_names)
@@ -255,7 +255,7 @@ def main() -> int:
 
     print(f"{build_job_name(runnable_case_names)}: {completed.stdout.strip()}")
     print()
-    print(f"Summary: submitted=1, skipped={skipped}, run_script={paths.run_shock_batch_script}")
+    print(f"Summary: submitted=1, skipped={skipped}, run_script={paths.run_shock_extraction_script}")
     return 0
 
 

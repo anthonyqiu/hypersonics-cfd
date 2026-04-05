@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import sys
 import tomllib
 from pathlib import Path
@@ -288,16 +287,6 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
     return case_specs
 
 
-def backup_regular_file(path: Path, backup_path: Path) -> str:
-    if not path.exists() or path.is_symlink():
-        return "not-needed"
-    backup_path.parent.mkdir(parents=True, exist_ok=True)
-    if backup_path.exists():
-        return "exists"
-    shutil.copy2(path, backup_path)
-    return "created"
-
-
 def write_text_file(path: Path, content: str) -> str:
     if path.exists():
         current = path.read_text(encoding="utf-8")
@@ -349,7 +338,6 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
     alias_of = str(spec.get("alias_of", ""))
     case_dir = paths.case_path(case_name)
     generated_cfg = paths.generated_config_path(case_name)
-    legacy_dir = paths.legacy_case_dir(case_name)
 
     if alias_of:
         generated_cleanup = remove_if_exists(generated_cfg)
@@ -360,9 +348,7 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
             "case_name": case_name,
             "generated": f"alias->{alias_of} ({generated_cleanup})",
             "case_dir": alias_status,
-            "config_backup": "alias-skip",
             "config_cleanup": "alias-skip",
-            "run_backup": "alias-skip",
             "run_cleanup": "alias-skip",
             "removed_links": "alias-skip",
             "alias_of": alias_of,
@@ -378,10 +364,8 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
     config_text = render_template(template_text, spec) + "\n"
     generated_status = write_text_file(generated_cfg, config_text)
 
-    legacy_config = backup_regular_file(case_dir / "config.cfg", legacy_dir / "config.cfg")
     config_cleanup = remove_if_exists(case_dir / "config.cfg")
 
-    legacy_run = backup_regular_file(case_dir / "run.sh", legacy_dir / "run.sh")
     run_cleanup = remove_if_exists(case_dir / "run.sh")
 
     removed_links: list[str] = []
@@ -399,9 +383,7 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
         "case_name": case_name,
         "generated": generated_status,
         "case_dir": case_dir_status,
-        "config_backup": legacy_config,
         "config_cleanup": config_cleanup,
-        "run_backup": legacy_run,
         "run_cleanup": run_cleanup,
         "removed_links": ",".join(removed_links) if removed_links else "none",
         "alias_of": alias_of,
@@ -445,16 +427,12 @@ def main() -> int:
         alias_suffix = f", alias_of={result['alias_note']}" if result["alias_note"] else ""
         print(
             f"{result['case_name']}: case_dir={result['case_dir']}, generated={result['generated']}, "
-            f"config_backup={result['config_backup']}, config_cleanup={result['config_cleanup']}, "
-            f"run_backup={result['run_backup']}, run_cleanup={result['run_cleanup']}, "
+            f"config_cleanup={result['config_cleanup']}, run_cleanup={result['run_cleanup']}, "
             f"removed_links={result['removed_links']}{alias_suffix}"
         )
 
     print()
-    print(
-        f"Summary: updated {len(case_specs)} case(s), generated_dir={paths.generated_config_dir}, "
-        f"legacy_dir={paths.legacy_case_layout_dir}"
-    )
+    print(f"Summary: updated {len(case_specs)} case(s), generated_dir={paths.generated_config_dir}")
     return 0
 
 

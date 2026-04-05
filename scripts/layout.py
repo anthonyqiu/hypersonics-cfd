@@ -11,22 +11,18 @@ class StudyPaths:
     study_root: Path
     study_file: Path
     meshes_dir: Path
-    legacy_case_layout_dir: Path
     generated_config_dir: Path
     shock_manifest_dir: Path
     cases_dir: Path
     su2_template: Path
     run_case_script: Path
-    run_shock_batch_script: Path
+    run_shock_extraction_script: Path
 
     def case_path(self, case_name: str) -> Path:
         return self.cases_dir / case_name
 
     def generated_config_path(self, case_name: str) -> Path:
         return self.generated_config_dir / f"{case_name}.cfg"
-
-    def legacy_case_dir(self, case_name: str) -> Path:
-        return self.legacy_case_layout_dir / case_name
 
     def ensure_runtime_dirs(self) -> None:
         for path in (
@@ -52,11 +48,10 @@ def get_study_paths(study_name: str = "orion") -> StudyPaths:
         study_root=study_root,
         study_file=study_root / "study.toml",
         meshes_dir=study_root / "meshes",
-        legacy_case_layout_dir=study_root / "archive" / "legacy_case_layout",
         generated_config_dir=study_root / "build" / "generated-configs",
         shock_manifest_dir=study_root / "build" / "manifests",
         cases_dir=study_root / "data" / "cases",
         su2_template=root / "templates" / "su2" / "base.cfg",
         run_case_script=root / "templates" / "slurm" / "run_su2_case.sh",
-        run_shock_batch_script=root / "templates" / "slurm" / "run_shock_extraction_batch.sh",
+        run_shock_extraction_script=root / "templates" / "slurm" / "run_shock_extraction.sh",
     )

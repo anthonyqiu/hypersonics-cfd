@@ -22,9 +22,8 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Moved Orion meshes into `studies/orion/meshes/`.
 - Moved heavy case data into `studies/orion/data/`.
 - Moved generated configs and manifests into `studies/orion/build/`.
-- Archived older case-local config/run layouts under `studies/orion/archive/legacy_case_layout/`.
-- Archived old path-specific shock-method notes under `studies/orion/docs/legacy/`.
 - Removed the repository layout's dependence on the compatibility-only `reentry/orion` path.
+- Removed the temporary archive/backup layer so the repo only describes the active workflow and active study data layout.
 
 ### Functional improvements
 
@@ -53,13 +52,10 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `geometry/`: canonical CAD/profile inputs.
 - `meshes/`: Orion meshes used by generated configs.
 - `analysis/`: helper scripts, plotting assets, and digitization provenance that support interpretation but not production runs.
-- `archive/legacy_case_layout/`: archived legacy case-local config/run script copies.
 - `docs/`: Orion documentation.
-- `docs/legacy/`: older writeups that still reference the old one-folder layout.
 - `build/generated-configs/`: rendered SU2 configs for each managed case.
 - `build/manifests/`: generated batch manifests.
 - `data/cases/`: heavy per-case solver outputs and derived artifacts.
-- `data/backups/`: archived case directories.
 
 ## Script inventory
 
@@ -111,7 +107,7 @@ The redesign keeps Git focused on:
 - lightweight documentation
 - small canonical geometry inputs
 
-Heavy outputs and generated runtime content now live in ignored locations.
+Heavy outputs and generated runtime content now live in ignored locations, without a second in-repo archive layer to keep clean manually.
 
 ### Better support for cluster-to-local workflows
 
@@ -164,7 +160,7 @@ These sources support the core design decision used here: keep the repo as the w
 - Dry-ran `scripts/submit_shock_extraction.py --study orion --case m3_coarse --rerun`.
 - Ran `scripts/check_convergence.py --study orion m3_coarse` and `m1.5_coarse`.
 - Ran `scripts/extract_shock_surface.py --study orion m3_coarse`.
-- Checked `templates/slurm/run_shock_extraction_batch.sh` and `templates/slurm/run_su2_case.sh` usage output.
+- Checked `templates/slurm/run_shock_extraction.sh` and `templates/slurm/run_su2_case.sh` usage output.
 - Verified `scripts/pull_cluster_results.sh` with `bash -n`; a live `ssh/scp` session was not exercised here because host-trust setup is local-machine specific.
 
 ## Follow-on recommendations
