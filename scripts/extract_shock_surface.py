@@ -67,16 +67,21 @@ stagnation_shock_node_radius = 0.10
 # `dt` = shell spacing. It controls how far apart neighboring shock rings are.
 default_dt = 0.10
 # `dn` = node-line spacing. It controls how finely we sample each 1D probe line.
-default_dn = 0.025
+default_dn = 0.01
 
 # Ignore very weak gradients far from the real shock.
 surface_sensor_min_fraction = 0.005
 
 # Reject triangles that stretch too far across local gaps in the sampled surface.
-surface_mesh_edge_factor = 6.0
+surface_mesh_edge_factor = 4
 
 # Savitzky-Golay smoothing settings for the 1D shock-sensor profile on each line.
-savgol_window_points = 9
+# We define smoothing in physical distance along the line instead of raw sample count so the
+# behavior stays similar when `dn` changes. This value is intentionally a bit larger than the
+# old stable setup (9 points at dn=0.025 -> about 0.225) to calm noisy peak picking.
+savgol_smoothing_length = 0.25
+savgol_min_window_points = 9
+savgol_max_window_points = 31
 savgol_poly_order = 3
 streamwise_padding_factor = 1.0
 
@@ -90,8 +95,8 @@ line_peak_prominence_fraction = 0.02
 stagnation_coarse_step_factor = 10.0
 
 # Panel-guided search-line settings used after the first shell.
-search_line_half_length_factor = 5.0
-panel_prediction_tolerance_dt_factor = 3.0
+search_line_half_length_factor = 10.0
+panel_prediction_tolerance_dt_factor = 2
 panel_fit_node_count = 5
 minimum_azimuth_rays = 12
 
@@ -348,21 +353,22 @@ def sample_line(
     }
 
 
-def find_stagnation_candidate(
+def build_stagnation_search_diagnostics(
     gradient_mesh: pv.DataSet,
     stream_center: float,
     stream_half_length: float,
     streamwise: np.ndarray,
     dn: float,
-) -> dict[str, float | int | np.ndarray]:
+) -> dict[str, object]:
     """
-    Find the first stagnation shock node with a coarse-to-fine streamwise search.
+    Build the coarse/refined diagnostics for the first stagnation search line.
 
     The full stagnation line can be long, so the coarse pass cheaply localizes the shock.
     We then resample only one coarse interval around that location using the normal fine `dn`.
     """
     coarse_step = max(dn, stagnation_coarse_step_factor * dn)
-    line_center = np.asarray(stream_center, dtype=float) * np.asarray(streamwise, dtype=float)
+    line_direction = np.asarray(streamwise, dtype=float)
+    coarse_center = np.asarray(stream_center, dtype=float) * line_direction
 
     progress(
         f"  [stage] sampling stagnation node line (coarse pass, step={coarse_step:.4f}, "
@@ -370,8 +376,8 @@ def find_stagnation_candidate(
     )
     coarse_sample = sample_line(
         gradient_mesh,
-        line_center,
-        np.asarray(streamwise, dtype=float),
+        coarse_center,
+        line_direction,
         stream_half_length,
         coarse_step,
     )
@@ -403,12 +409,80 @@ def find_stagnation_candidate(
         selection_mode=PEAK_MODE_FIRST_UPSTREAM,
         fallback_global=True,
     )
-    if refined_candidate is None:
-        return coarse_candidate
-    return refined_candidate
+    chosen_candidate = refined_candidate if refined_candidate is not None else coarse_candidate
+    return {
+        "coarse": {
+            "sample": coarse_sample,
+            "candidate": coarse_candidate,
+            "line_center": coarse_center,
+            "line_direction": line_direction,
+            "half_length": float(stream_half_length),
+            "sample_spacing": float(coarse_step),
+        },
+        "refined": {
+            "sample": refined_sample,
+            "candidate": refined_candidate,
+            "line_center": refine_center,
+            "line_direction": line_direction,
+            "half_length": float(refine_half_length),
+            "sample_spacing": float(dn),
+        },
+        "chosen_candidate": chosen_candidate,
+    }
 
 
-def smooth_line_profile(values: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+def find_stagnation_candidate(
+    gradient_mesh: pv.DataSet,
+    stream_center: float,
+    stream_half_length: float,
+    streamwise: np.ndarray,
+    dn: float,
+) -> dict[str, float | int | np.ndarray]:
+    """Return the final stagnation candidate from the coarse-to-fine search."""
+    diagnostics = build_stagnation_search_diagnostics(
+        gradient_mesh,
+        stream_center,
+        stream_half_length,
+        streamwise,
+        dn,
+    )
+    return diagnostics["chosen_candidate"]  # type: ignore[return-value]
+
+
+def autoscaled_savgol_window_points(sample_spacing: float, segment_size: int) -> int:
+    """
+    Convert the target physical smoothing length into an odd Savitzky-Golay window size.
+
+    This keeps the smoothing span roughly fixed in physical space even when `dn` changes.
+    """
+    if segment_size < 3:
+        return segment_size
+    if sample_spacing <= 0.0:
+        raise ValueError("sample spacing must be positive")
+
+    min_window = max(3, int(savgol_min_window_points), int(savgol_poly_order) + 2)
+    if min_window % 2 == 0:
+        min_window += 1
+
+    max_window = max(min_window, int(savgol_max_window_points))
+    if max_window % 2 == 0:
+        max_window -= 1
+
+    target_window = int(math.ceil(float(savgol_smoothing_length) / float(sample_spacing)))
+    target_window = max(min_window, target_window)
+    if target_window % 2 == 0:
+        target_window += 1
+    target_window = min(target_window, max_window)
+
+    segment_limit = segment_size if segment_size % 2 == 1 else segment_size - 1
+    return min(target_window, segment_limit)
+
+
+def smooth_line_profile(
+    values: np.ndarray,
+    valid_mask: np.ndarray,
+    line_coordinates: np.ndarray,
+) -> np.ndarray:
     """
     Smooth only the valid portion of a node-line profile.
 
@@ -428,7 +502,12 @@ def smooth_line_profile(values: np.ndarray, valid_mask: np.ndarray) -> np.ndarra
         smoothed[start:stop] = segment
         return smoothed
 
-    window = min(savgol_window_points, segment.size if segment.size % 2 == 1 else segment.size - 1)
+    if line_coordinates.size >= 2:
+        sample_spacing = abs(float(line_coordinates[1]) - float(line_coordinates[0]))
+    else:
+        sample_spacing = float(default_dn)
+
+    window = autoscaled_savgol_window_points(sample_spacing, segment.size)
     if window < 3:
         smoothed[start:stop] = segment
         return smoothed
@@ -456,7 +535,11 @@ def find_shock_node_on_line(
     if valid_idx.size == 0:
         return None
 
-    smoothed = smooth_line_profile(line_sample["shock_sensor_raw"], line_sample["valid_mask"])
+    smoothed = smooth_line_profile(
+        line_sample["shock_sensor_raw"],
+        line_sample["valid_mask"],
+        line_sample["line_coordinates"],
+    )
     start = int(valid_idx[0])
     stop = int(valid_idx[-1]) + 1
     segment = smoothed[start:stop]
@@ -1063,7 +1146,7 @@ def main() -> int:
     print(
         f"Spacing from code settings: dt={dt:.4f}, dn={dn:.4f}, "
         f"sensor floor: {surface_sensor_min_fraction:g} of center peak, "
-        f"savgol window/poly: {savgol_window_points}/{savgol_poly_order}"
+        f"savgol smoothing length/poly: {savgol_smoothing_length:.4f}/{savgol_poly_order}"
     )
 
     cases = cases_from_environment(paths)

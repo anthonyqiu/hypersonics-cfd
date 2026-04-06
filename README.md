@@ -64,6 +64,12 @@ Check convergence interactively:
 python3 scripts/check_convergence.py
 ```
 
+Export the coarse/refined initial stagnation search-line profile for smoothing diagnostics:
+
+```bash
+python3 scripts/export_initial_search_line.py
+```
+
 Pull selected results directly from the cluster to a local machine:
 
 ```bash

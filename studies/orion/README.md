@@ -18,7 +18,8 @@
 2. Render configs with `python3 ../../scripts/setup_cases.py` and follow the prompts.
 3. Submit solver runs with `python3 ../../scripts/submit_cases.py`.
 4. Submit shock extraction with `python3 ../../scripts/submit_shock_extraction.py`.
-5. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout. By default it writes into `data/cases/`; set `LOCAL_CASES_DIR` only if you want a different destination.
+5. Export the coarse/refined initial stagnation search-line profile with `python3 ../../scripts/export_initial_search_line.py` when you want to inspect raw vs smoothed `|grad rho|`.
+6. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout. By default it writes into `data/cases/`; set `LOCAL_CASES_DIR` only if you want a different destination.
 
 ## Notes
 
