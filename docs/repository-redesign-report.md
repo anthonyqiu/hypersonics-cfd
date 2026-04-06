@@ -69,7 +69,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `pull_cluster_results.sh`: interactive local-machine helper for copying selected result files directly from cluster case folders into local case folders.
 - `case_selection.py`: shared case discovery, filtering, deduplication, and path resolution helpers.
 - `layout.py`: central study/repo path model.
-- `shock_geometry.py`: AoA-aligned coordinate-frame helpers used by the supported extractor.
+- `extract_shock_surface.py` also contains the AoA parsing and coordinate-frame helpers it uses, so the maintained shock workflow lives in one file instead of two.
 
 ## Why the new structure is better
 
@@ -147,20 +147,20 @@ These sources support the core design decision used here: keep the repo as the w
 ## Verification performed
 
 - Compiled the consolidated Python workflow with `python3 -m compileall scripts`.
-- Verified `--help` for:
+- Verified the interactive workflow for:
   - `scripts/setup_cases.py`
   - `scripts/submit_cases.py`
   - `scripts/submit_shock_extraction.py`
   - `scripts/extract_shock_surface.py`
   - `scripts/check_convergence.py`
-- Ran `scripts/setup_cases.py --campaign orion --case m3_coarse --case m3_fine --apply`.
+- Ran `scripts/setup_cases.py` interactively to stage `m3_coarse` and `m3_fine`.
 - Confirmed generated configs now point to `../../meshes/coarse.su2`.
 - Confirmed generated configs now point to explicit mesh and case-output paths.
 - Confirmed alias preservation for `m3_fine -> m3_aoa0`.
-- Dry-ran `scripts/submit_cases.py --campaign orion --case m3_coarse --resubmit`.
-- Dry-ran `scripts/submit_shock_extraction.py --study orion --case m3_coarse --rerun`.
-- Ran `scripts/check_convergence.py --study orion m3_coarse` and `m1.5_coarse`.
-- Ran `scripts/extract_shock_surface.py --study orion m3_coarse`.
+- Dry-ran `scripts/submit_cases.py` interactively.
+- Dry-ran `scripts/submit_shock_extraction.py` interactively.
+- Ran `scripts/check_convergence.py` interactively.
+- Ran `scripts/extract_shock_surface.py` on `m3_coarse`.
 - Checked `templates/slurm/run_shock_extraction.sh` and `templates/slurm/run_su2_case.sh` usage output.
 - Verified `scripts/pull_cluster_results.sh` with `bash -n`; a live `ssh/scp` session was not exercised here because host-trust setup is local-machine specific.
 

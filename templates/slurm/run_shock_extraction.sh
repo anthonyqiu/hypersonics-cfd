@@ -40,11 +40,14 @@ if [[ ! -f "$extract_script" ]]; then
     exit 2
 fi
 
+study_name="$(basename "$(dirname "$(dirname "$(dirname "$manifest_path")")")")"
+
 echo "Nodes:      ${SLURM_NODELIST:-local}"
 echo "Tasks:      ${SLURM_NTASKS:-local}"
 echo "CPUs/task:  ${SLURM_CPUS_PER_TASK:-local}"
 echo "Python:     $python_exe"
 echo "Manifest:   $manifest_path"
+echo "Study:      $study_name"
 
 cd "$root_dir"
 
@@ -54,7 +57,7 @@ while IFS= read -r case_path || [[ -n "$case_path" ]]; do
     case_count=$((case_count + 1))
     echo
     echo "=== Extracting $case_path ==="
-    "$python_exe" "$extract_script" "$case_path"
+    CFD_STUDY="$study_name" CFD_CASE="$case_path" "$python_exe" "$extract_script"
 done < "$manifest_path"
 
 echo

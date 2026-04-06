@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import re
 from pathlib import Path
 from typing import Any
@@ -9,6 +8,7 @@ from typing import Any
 
 CASE_NAME_RE = re.compile(r"^(m\d+(?:\.\d+)?)(?:_aoa\d+(?:p\d+)?|_(?:coarse|medium|fine))$")
 REFINEMENT_SUFFIXES = ("_coarse", "_medium", "_fine")
+MESH_LEVEL_ORDER = {"coarse": 0, "medium": 1, "fine": 2}
 
 
 def format_aoa_token(value: Any) -> str:
@@ -24,46 +24,6 @@ def normalize_mach_tokens(values: list[str]) -> set[str]:
 
 def normalize_strings(values: list[str]) -> set[str]:
     return {str(value).strip() for value in values}
-
-
-def add_managed_case_filter_args(
-    parser: argparse.ArgumentParser,
-    *,
-    study_option: str = "--study",
-    study_dest: str = "study",
-) -> None:
-    parser.add_argument(
-        "--case",
-        action="append",
-        dest="cases",
-        default=[],
-        help="Select an exact case name. Repeat for multiple cases.",
-    )
-    parser.add_argument(
-        study_option,
-        dest=study_dest,
-        action="append",
-        default=[],
-        help='Filter by study name, for example "aoa" or "refinement".',
-    )
-    parser.add_argument(
-        "--mach",
-        action="append",
-        default=[],
-        help="Filter by Mach family, for example 3, 6, or 9.",
-    )
-    parser.add_argument(
-        "--aoa",
-        action="append",
-        default=[],
-        help="Filter by angle of attack, for example 32 or 60.",
-    )
-    parser.add_argument(
-        "--mesh-level",
-        action="append",
-        default=[],
-        help='Filter by mesh level, for example "coarse", "medium", or "fine".',
-    )
 
 
 def filter_case_specs(
@@ -101,6 +61,124 @@ def filter_case_specs(
         selected = [spec for spec in selected if spec["mesh_level"] in allowed]
 
     return selected
+
+
+def prompt_yes_no(prompt: str, *, default: bool = True) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    answer = input(f"{prompt} {suffix}: ").strip().lower()
+    if not answer:
+        return default
+    if answer in {"y", "yes"}:
+        return True
+    if answer in {"n", "no"}:
+        return False
+    print("Please answer y or n.")
+    return prompt_yes_no(prompt, default=default)
+
+
+def prompt_with_default(prompt: str, default: str) -> str:
+    answer = input(f"{prompt} [{default}]: ").strip()
+    return answer or default
+
+
+def mach_sort_key(mach_label: str) -> float:
+    try:
+        return float(mach_label.removeprefix("m"))
+    except ValueError:
+        return float("inf")
+
+
+def case_spec_sort_key(spec: dict[str, Any]) -> tuple[object, ...]:
+    aoa_value = float(spec.get("aoa_value", 0.0))
+    mesh_level = str(spec.get("mesh_level", ""))
+    return (
+        str(spec.get("study", "")),
+        mach_sort_key(f"m{spec.get('mach_token', '')}"),
+        aoa_value,
+        MESH_LEVEL_ORDER.get(mesh_level, 99),
+        str(spec.get("case_name", "")),
+    )
+
+
+def format_study_label(study_name: str) -> str:
+    return study_name.replace("_", " ").title()
+
+
+def choose_managed_case_specs_interactively(
+    case_specs: list[dict[str, Any]],
+    *,
+    action_label: str = "work with",
+    custom_example: str = "m6_aoa15",
+) -> list[dict[str, Any]]:
+    if not case_specs:
+        print("No managed cases are available.")
+        return []
+
+    sorted_specs = sorted(case_specs, key=case_spec_sort_key)
+
+    grouped_by_study: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for spec in sorted_specs:
+        study_name = str(spec["study"])
+        mach_label = f"m{spec['mach_token']}"
+        grouped_by_study.setdefault(study_name, {}).setdefault(mach_label, []).append(spec)
+
+    menu_items: list[tuple[str, list[dict[str, Any]]]] = []
+    print(f"\nSelect case group to {action_label}:\n")
+
+    for study_name in sorted(grouped_by_study.keys()):
+        print(f"  -- {format_study_label(study_name)} " + "─" * 24)
+        study_specs: list[dict[str, Any]] = []
+
+        for mach_label in sorted(grouped_by_study[study_name].keys(), key=mach_sort_key):
+            mach_specs = grouped_by_study[study_name][mach_label]
+            study_specs.extend(mach_specs)
+            case_names = ", ".join(str(spec["case_name"]) for spec in mach_specs)
+            label = f"{format_study_label(study_name)}: {mach_label.upper()} cases ({case_names})"
+            print(f"  {len(menu_items)+1:2}) {label}")
+            menu_items.append((label, mach_specs))
+
+        if len(study_specs) > 1:
+            label = f"All {format_study_label(study_name)} cases"
+            print(f"  {len(menu_items)+1:2}) {label}")
+            menu_items.append((label, study_specs))
+
+        print()
+
+    print("  -- Bulk " + "─" * 32)
+    high_aoa_specs = [spec for spec in sorted_specs if float(spec.get("aoa_value", 0.0)) >= 40.0]
+    if high_aoa_specs:
+        label = "High AoA cases (>= 40 deg)"
+        print(f"  {len(menu_items)+1:2}) {label}")
+        menu_items.append((label, high_aoa_specs))
+
+    label = "Everything"
+    print(f"  {len(menu_items)+1:2}) {label}")
+    menu_items.append((label, sorted_specs))
+
+    label = "Custom case names"
+    print(f"  {len(menu_items)+1:2}) {label}")
+    menu_items.append(("CUSTOM", []))
+
+    print("\n  q) Quit\n")
+    choice = input(f"Selection [1-{len(menu_items)}/q]: ").strip().lower()
+    if choice == "q":
+        print("Bye!")
+        return []
+
+    try:
+        index = int(choice) - 1
+        assert 0 <= index < len(menu_items)
+    except (ValueError, AssertionError):
+        print("Invalid choice.")
+        return []
+
+    label, selected_specs = menu_items[index]
+    if label == "CUSTOM":
+        raw = input(f"Enter case names (comma separated, e.g. {custom_example}): ").strip()
+        requested = [part.strip() for part in raw.split(",") if part.strip()]
+        return filter_case_specs(sorted_specs, requested, [], [], [], [])
+
+    return list(selected_specs)
 
 
 def resolve_case_path(root: Path, cases_dir: Path, case_dir: str) -> Path:
@@ -145,13 +223,6 @@ def deduplicate_case_names(root: Path, cases_dir: Path, case_names: list[str]) -
         seen_realpaths.add(real_path)
         deduped.append(case_name)
     return deduped
-
-
-def mach_sort_key(mach_label: str) -> float:
-    try:
-        return float(mach_label.removeprefix("m"))
-    except ValueError:
-        return float("inf")
 
 
 def discover_postprocess_cases(cases_dir: Path, required_filename: str) -> tuple[list[str], dict[str, list[str]]]:

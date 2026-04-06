@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import shutil
 import subprocess
 import sys
@@ -9,8 +8,14 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
-from case_selection import deduplicate_case_names, choose_postprocess_cases_interactively, resolve_case_path
-from layout import get_study_paths
+from case_selection import (
+    choose_postprocess_cases_interactively,
+    deduplicate_case_names,
+    prompt_with_default,
+    prompt_yes_no,
+    resolve_case_path,
+)
+from layout import choose_study_paths_interactively
 
 
 FLOW_FILENAME = "flow.vtu"
@@ -33,66 +38,6 @@ def load_submit_defaults(study_file: Path) -> tuple[str, str]:
     if defaults.get("job_time"):
         time_limit = str(defaults["job_time"])
     return account, time_limit
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Dry-run or submit overnight shock-extraction jobs."
-    )
-    parser.add_argument(
-        "--study",
-        default="orion",
-        help='Study slug under studies/. Defaults to "orion".',
-    )
-    parser.add_argument(
-        "cases",
-        nargs="*",
-        help="Optional case names or paths. If omitted, the interactive selector is used.",
-    )
-    parser.add_argument(
-        "--case",
-        action="append",
-        dest="case_flags",
-        default=[],
-        help="Select an exact case name. Repeat for multiple cases.",
-    )
-    parser.add_argument(
-        "--submit",
-        action="store_true",
-        help="Actually call sbatch. Without this flag the script only prints commands.",
-    )
-    parser.add_argument(
-        "--rerun",
-        action="store_true",
-        help="Allow submitting cases that already have both shock_surface outputs.",
-    )
-    parser.add_argument(
-        "--time",
-        default="",
-        help="SLURM walltime for each extraction job. Defaults to the study's configured job_time.",
-    )
-    parser.add_argument(
-        "--account",
-        default="",
-        help="SLURM account. Defaults to the study's configured job_account.",
-    )
-    parser.add_argument(
-        "--cpus-per-task",
-        type=int,
-        default=1,
-        help="SLURM CPUs per task. Defaults to 1.",
-    )
-    parser.add_argument(
-        "--mem",
-        default=DEFAULT_MEM,
-        help=f'SLURM memory request. Defaults to "{DEFAULT_MEM}".',
-    )
-    parser.add_argument(
-        "--python",
-        default=sys.executable,
-        help="Python executable to use inside the batch job. Defaults to the current interpreter.",
-    )
-    return parser.parse_args()
 
 
 def has_completed_outputs(case_path: Path) -> bool:
@@ -122,7 +67,12 @@ def build_sbatch_command(
     extract_script: Path,
     manifest_path: Path,
     case_names: list[str],
-    args: argparse.Namespace,
+    *,
+    cpus_per_task: int,
+    mem: str,
+    time_limit: str,
+    account: str,
+    python_executable: str,
 ) -> list[str]:
     return [
         "sbatch",
@@ -135,13 +85,13 @@ def build_sbatch_command(
         "--ntasks-per-node",
         "1",
         "--cpus-per-task",
-        str(args.cpus_per_task),
+        str(cpus_per_task),
         "--mem",
-        str(args.mem),
+        str(mem),
         "--time",
-        str(args.time),
+        str(time_limit),
         "--account",
-        str(args.account),
+        str(account),
         "--output",
         "shock_extract_%j.out",
         "--error",
@@ -149,31 +99,75 @@ def build_sbatch_command(
         "--chdir",
         str(repo_root),
         str(run_script),
-        str(args.python),
+        str(python_executable),
         str(extract_script),
         str(manifest_path),
     ]
 
 
+def choose_submit_mode() -> bool:
+    print("\nChoose shock-extraction submission mode:\n")
+    print("  1) Dry-run (print sbatch command only)")
+    print("  2) Submit batch job now")
+    print("\n  q) Quit\n")
+
+    choice = input("Mode [1/2/q]: ").strip().lower()
+    if choice == "1":
+        return False
+    if choice == "2":
+        return True
+    if choice == "q":
+        raise SystemExit(0)
+    raise SystemExit("Invalid submission mode.")
+
+
+def choose_resource_settings(default_account: str, default_time: str) -> tuple[int, str, str, str, str]:
+    print("\nShock extraction resource defaults:")
+    print(f"  cpus-per-task: 1")
+    print(f"  mem:           {DEFAULT_MEM}")
+    print(f"  time:          {default_time}")
+    print(f"  account:       {default_account}")
+    print(f"  python:        {sys.executable}")
+
+    if prompt_yes_no("Use these defaults?", default=True):
+        return 1, DEFAULT_MEM, default_time, default_account, sys.executable
+
+    cpus_text = prompt_with_default("CPUs per task", "1")
+    mem = prompt_with_default("Memory request", DEFAULT_MEM)
+    time_limit = prompt_with_default("Walltime", default_time)
+    account = prompt_with_default("Account", default_account)
+    python_executable = prompt_with_default("Python executable", sys.executable)
+
+    try:
+        cpus_per_task = int(cpus_text)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid CPU count: {cpus_text}") from exc
+
+    if cpus_per_task <= 0:
+        raise SystemExit("CPUs per task must be positive.")
+
+    python_path = Path(python_executable).expanduser()
+    if not python_path.exists():
+        raise SystemExit(f"Python executable not found: {python_path}")
+
+    return cpus_per_task, mem, time_limit, account, str(python_path)
+
+
 def main() -> int:
-    args = parse_args()
-    paths = get_study_paths(args.study)
+    paths = choose_study_paths_interactively()
     default_account, default_time = load_submit_defaults(paths.study_file)
-    if not args.account:
-        args.account = default_account
-    if not args.time:
-        args.time = default_time
+    submit_jobs = choose_submit_mode()
+    rerun_existing = prompt_yes_no(
+        "Allow cases that already have shock_surface outputs to be included again?",
+        default=False,
+    )
+    cpus_per_task, mem, time_limit, account, python_executable = choose_resource_settings(
+        default_account,
+        default_time,
+    )
 
-    if args.cpus_per_task <= 0:
-        raise SystemExit("--cpus-per-task must be positive.")
-
-    python_exe = Path(args.python).expanduser()
-    if not python_exe.exists():
-        raise SystemExit(f"Python executable not found: {python_exe}")
-    args.python = str(python_exe)
-
-    if args.submit and shutil.which("sbatch") is None:
-        raise SystemExit("sbatch was not found in PATH. Re-run without --submit for a dry run.")
+    if submit_jobs and shutil.which("sbatch") is None:
+        raise SystemExit("sbatch was not found in PATH. Use the dry-run mode instead.")
 
     extract_script = paths.repo_root / "scripts" / "extract_shock_surface.py"
     paths.ensure_runtime_dirs()
@@ -184,14 +178,13 @@ def main() -> int:
     print(f"Study: {paths.study_name}")
     print(f"Run script: {paths.run_shock_extraction_script}")
     print(f"Extractor: {extract_script}")
-    print(f"Python: {args.python}")
+    print(f"Python: {python_executable}")
     print(
-        f"Resources: nodes=1, ntasks-per-node=1, cpus-per-task={args.cpus_per_task}, mem={args.mem}, "
-        f"time={args.time}, account={args.account}"
+        f"Resources: nodes=1, ntasks-per-node=1, cpus-per-task={cpus_per_task}, mem={mem}, "
+        f"time={time_limit}, account={account}"
     )
 
-    requested_cases = list(args.case_flags) + list(args.cases)
-    cases = requested_cases or choose_postprocess_cases_interactively(paths.cases_dir, FLOW_FILENAME)
+    cases = choose_postprocess_cases_interactively(paths.cases_dir, FLOW_FILENAME)
     cases = deduplicate_case_names(paths.study_root, paths.cases_dir, cases)
     if not cases:
         return 0
@@ -206,7 +199,7 @@ def main() -> int:
             skipped += 1
             continue
 
-        if has_completed_outputs(case_path) and not args.rerun:
+        if has_completed_outputs(case_path) and not rerun_existing:
             print(f"{case_path.name}: skipped, shock_surface outputs already exist")
             skipped += 1
             continue
@@ -215,22 +208,26 @@ def main() -> int:
 
     if not runnable_case_names:
         print()
-        mode = "submitted" if args.submit else "planned"
+        mode = "submitted" if submit_jobs else "planned"
         print(f"Summary: {mode}=0, skipped={skipped}, run_script={paths.run_shock_extraction_script}")
         return 0
 
-    manifest_path = build_manifest_path(paths.shock_manifest_dir, runnable_case_names, for_submit=args.submit)
+    manifest_path = build_manifest_path(paths.shock_manifest_dir, runnable_case_names, for_submit=submit_jobs)
     command = build_sbatch_command(
         paths.repo_root,
         paths.run_shock_extraction_script,
         extract_script,
         manifest_path,
         runnable_case_names,
-        args,
+        cpus_per_task=cpus_per_task,
+        mem=mem,
+        time_limit=time_limit,
+        account=account,
+        python_executable=python_executable,
     )
     printable = " ".join(command)
 
-    if not args.submit:
+    if not submit_jobs:
         print(f"[dry-run] {printable}")
         print(f"Manifest: {manifest_path} (created on submit)")
         print(f"Batch contains {len(runnable_case_names)} case(s).")

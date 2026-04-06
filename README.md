@@ -37,20 +37,31 @@ hypersonics-cfd/
 Preview or stage case configs:
 
 ```bash
-python3 scripts/setup_cases.py --campaign orion --experiment aoa
-python3 scripts/setup_cases.py --campaign orion --case m3_coarse --apply
+python3 scripts/setup_cases.py
 ```
 
 Dry-run solver submissions:
 
 ```bash
-python3 scripts/submit_cases.py --campaign orion --case m3_coarse
+python3 scripts/submit_cases.py
 ```
 
 Dry-run shock extraction batch submissions:
 
 ```bash
-python3 scripts/submit_shock_extraction.py --study orion --case m6_aoa24
+python3 scripts/submit_shock_extraction.py
+```
+
+Run the interactive shock extractor directly:
+
+```bash
+python3 scripts/extract_shock_surface.py
+```
+
+Check convergence interactively:
+
+```bash
+python3 scripts/check_convergence.py
 ```
 
 Pull selected results directly from the cluster to a local machine:

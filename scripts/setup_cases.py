@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import sys
@@ -9,30 +8,16 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from case_selection import add_managed_case_filter_args, filter_case_specs, format_aoa_token
-from layout import StudyPaths, get_study_paths
+from case_selection import (
+    choose_managed_case_specs_interactively,
+    format_aoa_token,
+    prompt_yes_no,
+)
+from layout import StudyPaths, choose_study_paths_interactively
 
 
 PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z0-9_]+)\s*}}")
 OLD_CASE_LOCAL_LINKS = ("mesh.su2", "fine.su2", "medium.su2", "coarse.su2")
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Preview or stage generated configs and managed case links for a study."
-    )
-    parser.add_argument(
-        "--campaign",
-        default="orion",
-        help='Study slug under studies/. Defaults to "orion".',
-    )
-    parser.add_argument(
-        "--apply",
-        action="store_true",
-        help="Write generated configs and update the selected case folders.",
-    )
-    add_managed_case_filter_args(parser, study_option="--experiment", study_dest="experiment")
-    return parser.parse_args()
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -417,27 +402,24 @@ def preview_case(spec: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    args = parse_args()
-    paths = get_study_paths(args.campaign)
+    paths = choose_study_paths_interactively()
     _, template_text, case_specs = load_case_setup(paths)
-    case_specs = filter_case_specs(
-        case_specs,
-        args.cases,
-        args.experiment,
-        args.mach,
-        args.aoa,
-        args.mesh_level,
-    )
-
-    if not args.apply:
-        print(f"Study: {paths.study_name}")
-        print(f"Previewing {len(case_specs)} case(s):")
-        for spec in case_specs:
-            print(f"  - {preview_case(spec)}")
-        print()
-        print("No files written. Re-run with --apply to update the managed case layout.")
+    case_specs = choose_managed_case_specs_interactively(case_specs, action_label="preview or stage")
+    if not case_specs:
         return 0
 
+    print(f"\nStudy: {paths.study_name}")
+    print(f"Selected {len(case_specs)} case(s):")
+    for spec in case_specs:
+        print(f"  - {preview_case(spec)}")
+
+    apply_changes = prompt_yes_no("\nApply updates to these case folders now?", default=False)
+    if not apply_changes:
+        print()
+        print("No files written.")
+        return 0
+
+    print()
     for spec in case_specs:
         result = stage_case(paths, spec, template_text)
         alias_suffix = f", alias_of={result['alias_note']}" if result["alias_note"] else ""

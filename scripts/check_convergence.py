@@ -1,45 +1,17 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import csv
 import math
 import re
 import sys
 from pathlib import Path
 
-from layout import get_study_paths
+from case_selection import choose_postprocess_cases_interactively, prompt_with_default
+from layout import choose_study_paths_interactively
 
 
 CASE_NAME_RE = re.compile(r"^m\d+(?:\.\d+)?(?:_aoa\d+(?:p\d+)?|_(?:coarse|medium|fine))$")
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Check whether each residual in history.csv is at or below a target."
-    )
-    parser.add_argument(
-        "--study",
-        default="orion",
-        help='Study slug under studies/. Defaults to "orion".',
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=1e-5,
-        help="Residual magnitude target. Defaults to 1e-5.",
-    )
-    parser.add_argument(
-        "--root",
-        default="",
-        help="Optional root directory containing case folders. Defaults to the selected study data root.",
-    )
-    parser.add_argument(
-        "cases",
-        nargs="*",
-        help="Optional case names. If omitted, only recognized case folders are checked.",
-    )
-    return parser.parse_args()
 
 
 def is_case_dir(path: Path) -> bool:
@@ -73,26 +45,27 @@ def read_last_row(history_path: Path) -> tuple[list[str], list[str]] | None:
 
 
 def main() -> int:
-    args = parse_args()
-    paths = get_study_paths(args.study)
-    root = Path(args.root) if args.root else paths.cases_dir
-    threshold_log10 = math.log10(args.threshold)
-    case_dirs = find_case_dirs(root, args.cases)
-    explicit_cases = bool(args.cases)
+    paths = choose_study_paths_interactively()
+    threshold_text = prompt_with_default("Residual threshold", "1e-5")
+    try:
+        threshold = float(threshold_text)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid threshold: {threshold_text}") from exc
 
-    if not case_dirs:
-        print(f"No case folders found under {root}")
-        return 1
+    root = paths.cases_dir
+    selected_cases = choose_postprocess_cases_interactively(root, "history.csv")
+    if not selected_cases:
+        return 0
+
+    threshold_log10 = math.log10(threshold)
+    case_dirs = find_case_dirs(root, selected_cases)
 
     failures = 0
     for case_dir in case_dirs:
         history_path = case_dir / "history.csv"
         if not history_path.exists():
-            if explicit_cases:
-                print(f"{case_dir.name}: MISSING history.csv")
-                failures += 1
-            else:
-                print(f"{case_dir.name}: SKIP (no history.csv)")
+            print(f"{case_dir.name}: MISSING history.csv")
+            failures += 1
             continue
 
         parsed = read_last_row(history_path)
@@ -115,7 +88,7 @@ def main() -> int:
             failed_str = ", ".join(f"{name}={value:.3f}" for name, value in failed)
             print(f"{case_dir.name}: FAIL ({failed_str})")
         else:
-            print(f"{case_dir.name}: PASS ({len(residuals)} residuals <= {args.threshold:g})")
+            print(f"{case_dir.name}: PASS ({len(residuals)} residuals <= {threshold:g})")
 
     return 1 if failures else 0
 

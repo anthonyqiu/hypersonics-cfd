@@ -36,6 +36,17 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def list_study_names() -> list[str]:
+    studies_dir = repo_root() / "studies"
+    if not studies_dir.exists():
+        return []
+    return sorted(
+        path.name
+        for path in studies_dir.iterdir()
+        if path.is_dir() and (path / "study.toml").exists()
+    )
+
+
 def get_study_paths(study_name: str = "orion") -> StudyPaths:
     root = repo_root()
     study_root = root / "studies" / study_name
@@ -55,3 +66,34 @@ def get_study_paths(study_name: str = "orion") -> StudyPaths:
         run_case_script=root / "templates" / "slurm" / "run_su2_case.sh",
         run_shock_extraction_script=root / "templates" / "slurm" / "run_shock_extraction.sh",
     )
+
+
+def choose_study_paths_interactively(default: str = "orion") -> StudyPaths:
+    study_names = list_study_names()
+    if not study_names:
+        raise FileNotFoundError("No studies with study.toml were found under studies/")
+    if len(study_names) == 1:
+        return get_study_paths(study_names[0])
+
+    if default not in study_names:
+        default = study_names[0]
+
+    print("\nSelect study:\n")
+    for index, study_name in enumerate(study_names, start=1):
+        default_suffix = " [default]" if study_name == default else ""
+        print(f"  {index}) {study_name}{default_suffix}")
+    print("\n  q) Quit\n")
+
+    choice = input(f"Study [1-{len(study_names)}/q, default={default}]: ").strip().lower()
+    if choice == "":
+        return get_study_paths(default)
+    if choice == "q":
+        raise SystemExit(0)
+
+    try:
+        index = int(choice) - 1
+        assert 0 <= index < len(study_names)
+    except (ValueError, AssertionError):
+        raise SystemExit("Invalid study selection.")
+
+    return get_study_paths(study_names[index])

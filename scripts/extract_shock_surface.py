@@ -1,9 +1,42 @@
 #!/usr/bin/env python3
+"""
+Extract a 3D bow-shock surface from one CFD volume solution.
+
+If you are reading this file as a beginner, the big picture is:
+
+1. Read one `flow.vtu` file.
+2. Compute `|grad(rho)|`, the magnitude of the density gradient.
+3. Use that quantity as a "shock sensor" because shocks produce strong density jumps.
+4. Find an easy first shock point near the stagnation line.
+5. March outward shell by shell and find one shock point per ray when possible.
+6. Connect the accepted points into a triangulated surface.
+
+Glossary used throughout this file:
+
+- shock sensor:
+  The magnitude of the density gradient, `|grad(rho)|`.
+- node line:
+  A short 1D sampling line placed through the 3D flow field.
+- shock node:
+  One accepted shock point found from one node line.
+- shell:
+  One ring of shock nodes at a fixed distance from the streamwise axis.
+- ray:
+  One azimuth direction around the body.
+- panel-guided line:
+  A node line whose direction is predicted from earlier accepted shock nodes instead of always
+  pointing streamwise.
+- `dt`:
+  Spacing between neighboring shells.
+- `dn`:
+  Spacing between neighboring samples along one node line.
+"""
 from __future__ import annotations
 
-import argparse
 import csv
 import math
+import os
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,13 +46,7 @@ import pyvista as pv
 from scipy.signal import find_peaks, savgol_filter
 
 from case_selection import deduplicate_case_names, choose_postprocess_cases_interactively, resolve_case_path
-from layout import StudyPaths, get_study_paths
-from shock_geometry import (
-    frame_coordinates,
-    load_case_aoa_degrees,
-    perpendicular_radius,
-    streamwise_basis_from_aoa,
-)
+from layout import StudyPaths, choose_study_paths_interactively, get_study_paths
 
 try:
     from vtkmodules.vtkCommonCore import vtkObject
@@ -27,23 +54,43 @@ except ImportError:
     vtkObject = None
 
 # --------------- USER SETTINGS ---------------
+# This is the main tuning block for the extractor. The code below uses these values directly,
+# so this is the first place to look if you want to change spacing or sensitivity.
 vtu_name = "flow.vtu"
 density_scalar = "Density"
 output_surface_name = "shock_surface.vtp"
 output_csv_name = "shock_surface.csv"
 
-# Panel-guided ray controls.
+# Search radius around the streamwise axis for the very first stagnation shock point.
 stagnation_shock_node_radius = 0.10
+
+# `dt` = shell spacing. It controls how far apart neighboring shock rings are.
 default_dt = 0.10
+# `dn` = node-line spacing. It controls how finely we sample each 1D probe line.
 default_dn = 0.025
+
+# Ignore very weak gradients far from the real shock.
 surface_sensor_min_fraction = 0.005
-surface_mesh_edge_factor = 4.0
+
+# Reject triangles that stretch too far across local gaps in the sampled surface.
+surface_mesh_edge_factor = 6.0
+
+# Savitzky-Golay smoothing settings for the 1D shock-sensor profile on each line.
 savgol_window_points = 9
 savgol_poly_order = 3
 streamwise_padding_factor = 1.0
+
+# Peak-detection thresholds on each 1D line sample.
 line_peak_height_fraction = 0.05
 line_peak_prominence_fraction = 0.02
-panel_half_length_factor = 8.0
+
+# Stagnation search refinement:
+# - first scan the long stagnation line with a coarse spacing
+# - then resample a smaller window around that coarse peak using the normal `dn`
+stagnation_coarse_step_factor = 10.0
+
+# Panel-guided search-line settings used after the first shell.
+search_line_half_length_factor = 5.0
 panel_prediction_tolerance_dt_factor = 3.0
 panel_fit_node_count = 5
 minimum_azimuth_rays = 12
@@ -51,14 +98,18 @@ minimum_azimuth_rays = 12
 suppress_vtk_warnings = True
 # ---------------------------------------------
 
-LINE_MODE_CENTER = 0
+LINE_MODE_STAGNATION = 0
 LINE_MODE_STREAMWISE = 1
-LINE_MODE_PANEL = 2
+LINE_MODE_PANEL_GUIDED = 2
 
 PEAK_MODE_FIRST_UPSTREAM = "first_upstream"
 PEAK_MODE_NEAREST_CENTER = "nearest_center"
 
+AOA_LINE_RE = re.compile(r"^\s*AOA\s*=\s*([-+0-9.eE]+)")
+AOA_NAME_RE = re.compile(r"_aoa(\d+(?:p\d+)?)")
 
+
+# --- Lightweight helpers -----------------------------------------------------
 @contextmanager
 def vtk_warning_mode(enabled: bool):
     """Temporarily hide noisy VTK warnings while heavy sampling/derivative calls run."""
@@ -72,6 +123,89 @@ def vtk_warning_mode(enabled: bool):
         yield
     finally:
         vtkObject.SetGlobalWarningDisplay(previous)
+
+
+# --- AoA parsing and local coordinate-frame helpers --------------------------
+def parse_case_aoa_from_text(text: str) -> float | None:
+    """Read the first `AOA = ...` value from a config-like text block."""
+    for line in text.splitlines():
+        match = AOA_LINE_RE.match(line)
+        if match is not None:
+            return float(match.group(1))
+    return None
+
+
+def parse_case_aoa_from_name(case_name: str) -> float | None:
+    """Fallback AoA parser for case names like `m3_aoa15` or `m1.5_aoa24p5`."""
+    match = AOA_NAME_RE.search(case_name)
+    if match is None:
+        return None
+    return float(match.group(1).replace("p", "."))
+
+
+def load_case_aoa_degrees(generated_config_dir: Path, case_path: Path) -> float:
+    """
+    Get the case AoA, preferring config files over the case folder name.
+
+    This keeps the extractor tied to the actual run configuration when that information is
+    available, but still gives us a safe fallback for older case layouts.
+    """
+    generated_cfg = Path(generated_config_dir) / f"{case_path.name}.cfg"
+    local_cfg = case_path / "config.cfg"
+    candidate_paths = (generated_cfg, local_cfg)
+
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        aoa = parse_case_aoa_from_text(path.read_text(encoding="utf-8"))
+        if aoa is not None:
+            return float(aoa)
+
+    aoa_from_name = parse_case_aoa_from_name(case_path.name)
+    if aoa_from_name is not None:
+        return float(aoa_from_name)
+    return 0.0
+
+
+def streamwise_basis_from_aoa(aoa_degrees: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build the AoA-aware orthonormal basis used by the extractor.
+
+    The frame is:
+    - `streamwise`: freestream direction, rotated in the x-z plane
+    - `normal`: up/down direction in the AoA plane
+    - `spanwise`: unchanged global y direction
+    """
+    alpha = math.radians(float(aoa_degrees))
+    streamwise = np.asarray([math.cos(alpha), 0.0, math.sin(alpha)], dtype=float)
+    streamwise /= np.linalg.norm(streamwise)
+
+    spanwise = np.asarray([0.0, 1.0, 0.0], dtype=float)
+    normal = np.cross(streamwise, spanwise)
+    normal /= np.linalg.norm(normal)
+    return streamwise, normal, spanwise
+
+
+def frame_coordinates(
+    points: np.ndarray,
+    streamwise: np.ndarray,
+    normal: np.ndarray,
+    spanwise: np.ndarray,
+) -> np.ndarray:
+    """Project global xyz points into the local (streamwise, normal, spanwise) frame."""
+    pts = np.asarray(points, dtype=float)
+    return np.column_stack((pts @ streamwise, pts @ normal, pts @ spanwise))
+
+
+def perpendicular_radius(points: np.ndarray, streamwise: np.ndarray) -> np.ndarray:
+    """
+    Distance from each point to the AoA-aligned streamwise axis.
+
+    This is the sideways distance from the tilted centerline, not distance from the body.
+    """
+    pts = np.asarray(points, dtype=float)
+    axial = np.outer(pts @ streamwise, streamwise)
+    return np.linalg.norm(pts - axial, axis=1)
 
 
 def choose_stagnation_shock_node(
@@ -96,7 +230,13 @@ def choose_stagnation_shock_node(
 
 
 def configured_sampling_steps() -> tuple[float, float]:
-    """Read the user-tuned panel spacings directly from the settings block."""
+    """
+    Read the user-tuned sampling spacings directly from the settings block.
+
+    Returns:
+    - `dt`: spacing between neighboring shell layers
+    - `dn`: spacing between neighboring samples along one node line
+    """
     return float(default_dt), float(default_dn)
 
 
@@ -105,23 +245,24 @@ def progress(message: str):
     print(message, flush=True)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Extract a 3D shock surface using the panel-guided predictor/corrector method."
-    )
-    parser.add_argument(
-        "--study",
-        default="orion",
-        help='Study slug under studies/. Defaults to "orion".',
-    )
-    parser.add_argument(
-        "cases",
-        nargs="*",
-        help="Optional case names or paths. If omitted, the interactive selector is used.",
-    )
-    return parser.parse_args()
+@contextmanager
+def timed_stage(stage_times: dict[str, float], stage_name: str):
+    """
+    Time one coarse pipeline stage and print the elapsed time when it finishes.
+
+    This is intentionally lightweight: it is only meant to answer "where is the case-level
+    runtime going?" without cluttering the extractor with lots of nested instrumentation.
+    """
+    stage_start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_seconds = time.perf_counter() - stage_start
+        stage_times[stage_name] = elapsed_seconds
+        progress(f"  [time ] {stage_name}: {elapsed_seconds:.1f} s")
 
 
+# --- Build simple 1D node lines -----------------------------------------------
 def build_streamwise_window(
     active_points: np.ndarray,
     streamwise: np.ndarray,
@@ -207,6 +348,66 @@ def sample_line(
     }
 
 
+def find_stagnation_candidate(
+    gradient_mesh: pv.DataSet,
+    stream_center: float,
+    stream_half_length: float,
+    streamwise: np.ndarray,
+    dn: float,
+) -> dict[str, float | int | np.ndarray]:
+    """
+    Find the first stagnation shock node with a coarse-to-fine streamwise search.
+
+    The full stagnation line can be long, so the coarse pass cheaply localizes the shock.
+    We then resample only one coarse interval around that location using the normal fine `dn`.
+    """
+    coarse_step = max(dn, stagnation_coarse_step_factor * dn)
+    line_center = np.asarray(stream_center, dtype=float) * np.asarray(streamwise, dtype=float)
+
+    progress(
+        f"  [stage] sampling stagnation node line (coarse pass, step={coarse_step:.4f}, "
+        f"half_length={stream_half_length:.4f})"
+    )
+    coarse_sample = sample_line(
+        gradient_mesh,
+        line_center,
+        np.asarray(streamwise, dtype=float),
+        stream_half_length,
+        coarse_step,
+    )
+    coarse_candidate = find_shock_node_on_line(
+        coarse_sample,
+        min_height=0.0,
+        selection_mode=PEAK_MODE_FIRST_UPSTREAM,
+        fallback_global=True,
+    )
+    if coarse_candidate is None:
+        raise ValueError("could not find a shock node on the coarse stagnation node line")
+
+    refine_half_length = min(stream_half_length, coarse_step)
+    refine_center = np.asarray(coarse_candidate["point"], dtype=float)
+    progress(
+        f"  [stage] refining stagnation node line around coarse peak "
+        f"(half_length={refine_half_length:.4f}, step={dn:.4f})"
+    )
+    refined_sample = sample_line(
+        gradient_mesh,
+        refine_center,
+        np.asarray(streamwise, dtype=float),
+        refine_half_length,
+        dn,
+    )
+    refined_candidate = find_shock_node_on_line(
+        refined_sample,
+        min_height=0.0,
+        selection_mode=PEAK_MODE_FIRST_UPSTREAM,
+        fallback_global=True,
+    )
+    if refined_candidate is None:
+        return coarse_candidate
+    return refined_candidate
+
+
 def smooth_line_profile(values: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
     """
     Smooth only the valid portion of a node-line profile.
@@ -218,6 +419,8 @@ def smooth_line_profile(values: np.ndarray, valid_mask: np.ndarray) -> np.ndarra
     if valid_idx.size == 0:
         return smoothed
 
+    # Only smooth the continuous valid part of the sampled line. We do not want
+    # invalid VTK samples near the ends to influence the peak location.
     start = int(valid_idx[0])
     stop = int(valid_idx[-1]) + 1
     segment = np.asarray(values[start:stop], dtype=float)
@@ -261,6 +464,8 @@ def find_shock_node_on_line(
     height_threshold = max(float(min_height), local_max * line_peak_height_fraction)
     prominence_threshold = local_max * line_peak_prominence_fraction
 
+    # `find_peaks` returns all acceptable local maxima. We then apply a second rule
+    # to choose which peak is the physical shock for this particular line.
     peaks, _ = find_peaks(segment, height=height_threshold, prominence=prominence_threshold)
     candidate_indices = [start + int(idx) for idx in peaks]
     if candidate_indices:
@@ -287,13 +492,14 @@ def find_shock_node_on_line(
     }
 
 
+# --- Panel fitting and predictor/corrector marching ---------------------------
 def panel_history_for_ray(
-    center_row: dict[str, float | int],
+    stagnation_row: dict[str, float | int],
     ray_history: dict[int, list[dict[str, float | int]]],
     ray_index: int,
 ) -> list[dict[str, float | int]]:
     """Collect the stagnation point plus this ray's previously accepted shock nodes."""
-    return [center_row] + list(ray_history.get(ray_index, []))
+    return [stagnation_row] + list(ray_history.get(ray_index, []))
 
 
 def fit_panel_model(
@@ -311,6 +517,8 @@ def fit_panel_model(
     if len(history_rows) < 2:
         return None
 
+    # Use only the most recent accepted points on this ray. Older points are still
+    # useful physically, but the local shock shape near the current shell matters most.
     rows = history_rows[-panel_fit_node_count:]
     radii = np.asarray([float(row["radius_surface"]) for row in rows], dtype=float)
     stream_coords = np.asarray([float(row["stream_coord"]) for row in rows], dtype=float)
@@ -399,7 +607,8 @@ def predictor_corrector_candidate(
         return None, 0.0
 
     provisional_point = np.asarray(initial_candidate["point"], dtype=float)
-    # The provisional row is the "first guess" point used to nudge the panel fit once.
+    # The provisional row is the first guess. We temporarily pretend it is correct, refit
+    # the local panel once, and then resample on that corrected line.
     provisional_row = {
         "stream_coord": float(np.dot(provisional_point, streamwise)),
         "radius_surface": float(target_radius),
@@ -424,6 +633,7 @@ def predictor_corrector_candidate(
     return corrected_candidate, abs(float(corrected_candidate["line_coordinate"]))
 
 
+# --- Main shock-surface marching routine --------------------------------------
 def extract_panel_surface(
     gradient_mesh: pv.DataSet,
     active_points: np.ndarray,
@@ -449,7 +659,7 @@ def extract_panel_surface(
         active_points, streamwise, normal, spanwise, dn
     )
     normal_step = dn
-    panel_half_length = panel_half_length_factor * max(dt, dn)
+    search_line_half_length = search_line_half_length_factor * dt
     prediction_tolerance = panel_prediction_tolerance_dt_factor * dt
     max_surface_radius = max(float(np.max(perpendicular_radius(active_points, streamwise))), dt)
     azimuth_angles = build_surface_azimuth_rays(max_surface_radius, dt)
@@ -460,6 +670,8 @@ def extract_panel_surface(
         f"max_shells~{max_shell_count}"
     )
 
+    # `accepted_rows` stores one metadata dictionary per accepted shock node.
+    # `accepted_shock_nodes` stores just the xyz coordinates used to build the surface.
     accepted_rows: list[dict[str, float | int]] = []
     accepted_shock_nodes: list[np.ndarray] = []
     # Maps (shell, ray) -> point index in the final PolyData point list.
@@ -468,56 +680,49 @@ def extract_panel_surface(
     ray_history: dict[int, list[dict[str, float | int]]] = {ray_idx: [] for ray_idx in range(ray_count)}
 
     # First, find the stagnation shock node on a plain streamwise node line.
-    center_line_sample = sample_line(
+    stagnation_candidate = find_stagnation_candidate(
         gradient_mesh,
-        np.asarray(stream_center, dtype=float) * np.asarray(streamwise, dtype=float),
-        np.asarray(streamwise, dtype=float),
+        stream_center,
         stream_half_length,
-        normal_step,
+        streamwise,
+        dn,
     )
-    progress("  [stage] sampling stagnation node line")
-    center_candidate = find_shock_node_on_line(
-        center_line_sample,
-        min_height=0.0,
-        selection_mode=PEAK_MODE_FIRST_UPSTREAM,
-        fallback_global=True,
-    )
-    if center_candidate is None:
-        raise ValueError("could not find a shock node on the stagnation node line")
 
     # This first peak sets the global sensor floor for the rest of the extraction.
-    center_peak = float(center_candidate["shock_sensor_smoothed"])
+    center_peak = float(stagnation_candidate["shock_sensor_smoothed"])
     sensor_floor = center_peak * surface_sensor_min_fraction
-    center_point = np.asarray(center_candidate["point"], dtype=float)
-    center_row = {
-        "x": float(center_point[0]),
-        "y": float(center_point[1]),
-        "z": float(center_point[2]),
-        "stream_coord": float(np.dot(center_point, streamwise)),
-        "density": float(center_candidate["density"]),
-        "shock_sensor": float(center_candidate["shock_sensor_smoothed"]),
-        "shock_sensor_raw": float(center_candidate["shock_sensor_raw"]),
+    stagnation_point = np.asarray(stagnation_candidate["point"], dtype=float)
+    stagnation_row = {
+        "x": float(stagnation_point[0]),
+        "y": float(stagnation_point[1]),
+        "z": float(stagnation_point[2]),
+        "stream_coord": float(np.dot(stagnation_point, streamwise)),
+        "density": float(stagnation_candidate["density"]),
+        "shock_sensor": float(stagnation_candidate["shock_sensor_smoothed"]),
+        "shock_sensor_raw": float(stagnation_candidate["shock_sensor_raw"]),
         "radius_surface": 0.0,
         "azimuth_radians": 0.0,
         "shell_layer": 0,
         "ray_index": 0,
-        "line_index": int(center_candidate["sample_index"]),
-        "line_mode": LINE_MODE_CENTER,
+        "line_index": int(stagnation_candidate["sample_index"]),
+        "line_mode": LINE_MODE_STAGNATION,
         "prediction_error": 0.0,
     }
-    accepted_rows.append(center_row)
-    accepted_shock_nodes.append(center_point)
+    accepted_rows.append(stagnation_row)
+    accepted_shock_nodes.append(stagnation_point)
     progress(
-        f"  [stage] stagnation shock node found at x={center_point[0]:.4f}, "
-        f"y={center_point[1]:.4f}, z={center_point[2]:.4f}, peak={center_peak:.3f}"
+        f"  [stage] stagnation shock node found at x={stagnation_point[0]:.4f}, "
+        f"y={stagnation_point[1]:.4f}, z={stagnation_point[2]:.4f}, peak={center_peak:.3f}"
     )
 
     # March outward shell by shell. Each shell contains one candidate node line per ray.
     for shell_index in range(1, max_shell_count + 1):
         shell_radius = float(shell_index) * dt
-        accepted_in_ring: list[dict[str, float | int]] = []
+        # We collect a full shell first, then commit it afterward. That way one bad
+        # ray does not partially mutate the accepted surface mid-shell.
+        accepted_rows_in_shell: list[dict[str, float | int]] = []
         streamwise_accept_count = 0
-        panel_accept_count = 0
+        panel_guided_accept_count = 0
         progress(f"  [shell {shell_index}] radius_surface={shell_radius:.4f}")
         for ray_index, theta in enumerate(azimuth_angles):
             radial_unit = radial_unit_vector(theta, normal, spanwise)
@@ -541,7 +746,7 @@ def extract_panel_surface(
             else:
                 # Later shells can use the ray's previously accepted nodes to predict a better
                 # shock-normal direction.
-                history_rows = panel_history_for_ray(center_row, ray_history, ray_index)
+                history_rows = panel_history_for_ray(stagnation_row, ray_history, ray_index)
                 candidate, prediction_error = predictor_corrector_candidate(
                     gradient_mesh,
                     history_rows,
@@ -550,7 +755,7 @@ def extract_panel_surface(
                     streamwise,
                     normal,
                     spanwise,
-                    panel_half_length,
+                    search_line_half_length,
                     normal_step,
                     sensor_floor,
                 )
@@ -559,7 +764,7 @@ def extract_panel_surface(
                 # Reject panel candidates that drift too far from the panel prediction.
                 if prediction_error > prediction_tolerance:
                     continue
-                line_mode = LINE_MODE_PANEL
+                line_mode = LINE_MODE_PANEL_GUIDED
 
             if candidate is None:
                 continue
@@ -581,24 +786,24 @@ def extract_panel_surface(
                 "line_mode": int(line_mode),
                 "prediction_error": float(prediction_error),
             }
-            accepted_in_ring.append(row)
+            accepted_rows_in_shell.append(row)
             if line_mode == LINE_MODE_STREAMWISE:
                 streamwise_accept_count += 1
-            elif line_mode == LINE_MODE_PANEL:
-                panel_accept_count += 1
+            elif line_mode == LINE_MODE_PANEL_GUIDED:
+                panel_guided_accept_count += 1
 
         # If an entire shell finds no accepted shock nodes, the outward marching stops here.
-        if not accepted_in_ring:
+        if not accepted_rows_in_shell:
             progress(f"  [shell {shell_index}] accepted 0/{ray_count} shock nodes -> stopping")
             break
 
         progress(
-            f"  [shell {shell_index}] accepted {len(accepted_in_ring)}/{ray_count} shock nodes "
-            f"({streamwise_accept_count} streamwise, {panel_accept_count} panel)"
+            f"  [shell {shell_index}] accepted {len(accepted_rows_in_shell)}/{ray_count} shock nodes "
+            f"({streamwise_accept_count} streamwise, {panel_guided_accept_count} panel-guided)"
         )
 
         # Only commit a shell after the full ring has been tested.
-        for row in accepted_in_ring:
+        for row in accepted_rows_in_shell:
             point = np.asarray([row["x"], row["y"], row["z"]], dtype=float)
             local_idx = len(accepted_shock_nodes)
             accepted_shock_nodes.append(point)
@@ -607,6 +812,8 @@ def extract_panel_surface(
             accepted_rows.append(row)
             ray_history[int(row["ray_index"])].append(row)
 
+    # Build the actual ParaView surface object, then attach the per-point metadata so
+    # the same information is available in ParaView and in the CSV export.
     poly = pv.PolyData(np.asarray(accepted_shock_nodes))
     poly.point_data["Density"] = np.asarray([row["density"] for row in accepted_rows], dtype=float)
     poly.point_data["ShockSensor"] = np.asarray([row["shock_sensor"] for row in accepted_rows], dtype=float)
@@ -677,11 +884,12 @@ def extract_panel_surface(
         "dn": dn,
         "ray_count": ray_count,
         "max_shell_layer": max_shell_layer,
-        "panel_lines": sum(1 for row in accepted_rows if int(row["line_mode"]) == LINE_MODE_PANEL),
+        "panel_lines": sum(1 for row in accepted_rows if int(row["line_mode"]) == LINE_MODE_PANEL_GUIDED),
         "streamwise_lines": sum(1 for row in accepted_rows if int(row["line_mode"]) == LINE_MODE_STREAMWISE),
     }
     return poly, summary
 
+# --- Output and case-level orchestration --------------------------------------
 def write_surface_outputs(case_path: Path, surface: pv.PolyData):
     """Write the extracted surface both as ParaView geometry and as a flat CSV table."""
     surface_path = case_path / output_surface_name
@@ -709,6 +917,8 @@ def write_surface_outputs(case_path: Path, surface: pv.PolyData):
             ]
         )
 
+        # Pull each point-data column out once so the row-writing loop below is easy
+        # to read and each column name is spelled in only one place.
         density = np.asarray(surface["Density"])
         shock_sensor = np.asarray(surface["ShockSensor"])
         shock_sensor_raw = np.asarray(surface["ShockSensorRaw"])
@@ -747,6 +957,7 @@ def write_surface_outputs(case_path: Path, surface: pv.PolyData):
 def process_case(paths: StudyPaths, case_dir: str):
     """Run the full panel shock extraction pipeline for one CFD case folder."""
     case_start_time = time.perf_counter()
+    stage_times: dict[str, float] = {}
     case_path = resolve_case_path(paths.study_root, paths.cases_dir, case_dir)
     vtu_path = case_path / vtu_name
     if not vtu_path.exists():
@@ -754,11 +965,13 @@ def process_case(paths: StudyPaths, case_dir: str):
         return
 
     progress(f"  [stage] reading flow field: {vtu_path}")
-    mesh = pv.read(vtu_path)
+    with timed_stage(stage_times, "read flow field"):
+        mesh = pv.read(vtu_path)
     if density_scalar not in mesh.point_data and density_scalar in mesh.cell_data:
         # PyVista's derivative/sampling routines are easiest to use with point data.
         progress("  [stage] converting cell data to point data")
-        mesh = mesh.cell_data_to_point_data()
+        with timed_stage(stage_times, "convert cell data to point data"):
+            mesh = mesh.cell_data_to_point_data()
 
     if density_scalar not in mesh.array_names:
         available = ", ".join(sorted(mesh.array_names))
@@ -767,38 +980,44 @@ def process_case(paths: StudyPaths, case_dir: str):
     # Differentiate the full 3D density field first. The panel method works from this 3D
     # shock sensor instead of differentiating a lower-dimensional slice.
     progress("  [stage] differentiating 3D density field")
-    with vtk_warning_mode(suppress_vtk_warnings):
-        gradient_mesh = mesh.compute_derivative(scalars=density_scalar, gradient=True)
+    with timed_stage(stage_times, "differentiate 3D density field"):
+        with vtk_warning_mode(suppress_vtk_warnings):
+            gradient_mesh = mesh.compute_derivative(scalars=density_scalar, gradient=True)
 
-    aoa_degrees = load_case_aoa_degrees(paths.generated_config_dir, case_path)
-    progress(f"  [stage] building AoA-aligned frame (aoa={aoa_degrees:.1f} deg)")
-    streamwise, normal, spanwise = streamwise_basis_from_aoa(aoa_degrees)
-    points = np.asarray(gradient_mesh.points)
-    gradient = np.asarray(gradient_mesh["gradient"], dtype=float)
-    gradient = np.nan_to_num(gradient, nan=0.0, posinf=0.0, neginf=0.0)
-    # The shock sensor is the magnitude of grad(rho).
-    shock_sensor_raw = np.linalg.norm(gradient, axis=1)
-    gradient_mesh["ShockSensorRaw"] = shock_sensor_raw
+    with timed_stage(stage_times, "build frame and active shock region"):
+        aoa_degrees = load_case_aoa_degrees(paths.generated_config_dir, case_path)
+        progress(f"  [stage] building AoA-aligned frame (aoa={aoa_degrees:.1f} deg)")
+        streamwise, normal, spanwise = streamwise_basis_from_aoa(aoa_degrees)
+        points = np.asarray(gradient_mesh.points)
+        gradient = np.asarray(gradient_mesh["gradient"], dtype=float)
+        gradient = np.nan_to_num(gradient, nan=0.0, posinf=0.0, neginf=0.0)
+        # The shock sensor is the magnitude of grad(rho).
+        shock_sensor_raw = np.linalg.norm(gradient, axis=1)
+        gradient_mesh["ShockSensorRaw"] = shock_sensor_raw
 
-    progress("  [stage] locating stagnation shock node and active shock region")
-    _, center_peak = choose_stagnation_shock_node(points, shock_sensor_raw, streamwise)
-    # Ignore very weak gradients far from the shock so the marching logic focuses on the
-    # meaningful part of the field.
-    active_mask = shock_sensor_raw >= center_peak * surface_sensor_min_fraction
-    active_points = points[active_mask]
-    if active_points.size == 0:
-        raise ValueError("no active points passed the surface sensor threshold")
+        progress("  [stage] locating stagnation shock node and active shock region")
+        _, center_peak = choose_stagnation_shock_node(points, shock_sensor_raw, streamwise)
+        # Ignore very weak gradients far from the shock so the marching logic focuses on the
+        # meaningful part of the field.
+        active_mask = shock_sensor_raw >= center_peak * surface_sensor_min_fraction
+        active_points = points[active_mask]
+        if active_points.size == 0:
+            raise ValueError("no active points passed the surface sensor threshold")
 
     dt, dn = configured_sampling_steps()
+    # `dt` controls the shell-to-shell spacing; `dn` controls the sample spacing
+    # along each probe line.
     progress(
         f"  [stage] extracting shock surface (active points={active_points.shape[0]}, "
         f"dt={dt:.4f}, dn={dn:.4f})"
     )
-    surface, summary = extract_panel_surface(
-        gradient_mesh, active_points, dt, dn, streamwise, normal, spanwise
-    )
+    with timed_stage(stage_times, "extract shock surface"):
+        surface, summary = extract_panel_surface(
+            gradient_mesh, active_points, dt, dn, streamwise, normal, spanwise
+        )
     progress("  [stage] writing surface outputs")
-    surface_path, csv_path = write_surface_outputs(case_path, surface)
+    with timed_stage(stage_times, "write surface outputs"):
+        surface_path, csv_path = write_surface_outputs(case_path, surface)
     elapsed_seconds = time.perf_counter() - case_start_time
 
     progress(
@@ -809,11 +1028,31 @@ def process_case(paths: StudyPaths, case_dir: str):
         f"max_shell={summary['max_shell_layer']}, elapsed={elapsed_seconds / 60.0:.1f} min)"
     )
     progress(f"  [ok ] wrote {csv_path}")
+    progress("  [time ] timing summary:")
+    for stage_name, stage_seconds in stage_times.items():
+        progress(f"  [time ]   {stage_name}: {stage_seconds:.1f} s")
+    progress(f"  [time ]   total: {elapsed_seconds:.1f} s")
+
+
+def cases_from_environment(paths: StudyPaths) -> list[str]:
+    raw_cases = os.environ.get("CFD_CASES", "").strip()
+    single_case = os.environ.get("CFD_CASE", "").strip()
+    requested_cases: list[str] = []
+
+    if raw_cases:
+        requested_cases.extend(part.strip() for part in raw_cases.replace("\n", ",").split(",") if part.strip())
+    if single_case:
+        requested_cases.append(single_case)
+
+    if not requested_cases:
+        return []
+
+    return deduplicate_case_names(paths.study_root, paths.cases_dir, requested_cases)
 
 
 def main() -> int:
-    args = parse_args()
-    paths = get_study_paths(args.study)
+    env_study = os.environ.get("CFD_STUDY", "").strip()
+    paths = get_study_paths(env_study) if env_study else choose_study_paths_interactively()
 
     print("\n╔══════════════════════════════════════════════╗")
     print("║   Panel Shock Surface Extractor             ║")
@@ -827,8 +1066,10 @@ def main() -> int:
         f"savgol window/poly: {savgol_window_points}/{savgol_poly_order}"
     )
 
-    cases = args.cases or choose_postprocess_cases_interactively(paths.cases_dir, vtu_name)
-    cases = deduplicate_case_names(paths.study_root, paths.cases_dir, cases)
+    cases = cases_from_environment(paths)
+    if not cases:
+        cases = choose_postprocess_cases_interactively(paths.cases_dir, vtu_name)
+        cases = deduplicate_case_names(paths.study_root, paths.cases_dir, cases)
     if not cases:
         return 0
 
