@@ -93,6 +93,16 @@ run_remote_bash() {
     ssh -o LogLevel=ERROR "${REMOTE_HOST}" "bash -lc $(printf '%q' "$script")"
 }
 
+remote_file_exists() {
+    local remote_path="$1"
+    local remote_path_q
+    local remote_script
+
+    printf -v remote_path_q '%q' "${remote_path}"
+    remote_script="test -f ${remote_path_q}"
+    run_remote_bash "${remote_script}" >/dev/null 2>&1
+}
+
 resolve_cluster_cases_dir() {
     local -a candidates=()
     local candidate
@@ -187,13 +197,29 @@ copy_file() {
     local case_name="$1"
     local file_name="$2"
     local local_dir="$3"
+    local current_transfer="$4"
+    local total_transfers="$5"
+    local remote_path="${REMOTE_CASES_DIR}/${case_name}/${file_name}"
+    local progress_label=""
 
-    if scp -q "${REMOTE_HOST}:${REMOTE_CASES_DIR}/${case_name}/${file_name}" "${local_dir}/${file_name}" 2>/dev/null; then
-        echo -e "    ${GREEN}OK${RESET} ${file_name}"
+    if [ "${total_transfers}" -gt 0 ]; then
+        printf -v progress_label "[%d/%d]" "${current_transfer}" "${total_transfers}"
+    else
+        progress_label="[1/1]"
+    fi
+
+    if ! remote_file_exists "${remote_path}"; then
+        echo -e "    ${CYAN}${progress_label}${RESET} ${RED}--${RESET} ${file_name} not found"
+        return 1
+    fi
+
+    echo -e "    ${CYAN}${progress_label}${RESET} ${BOLD}Downloading${RESET} ${file_name}"
+    if scp -o LogLevel=ERROR "${REMOTE_HOST}:${remote_path}" "${local_dir}/${file_name}"; then
+        echo -e "    ${CYAN}${progress_label}${RESET} ${GREEN}OK${RESET} ${file_name}"
         return 0
     fi
 
-    echo -e "    ${RED}--${RESET} ${file_name} not found"
+    echo -e "    ${CYAN}${progress_label}${RESET} ${RED}!!${RESET} transfer failed for ${file_name}"
     return 1
 }
 
@@ -204,8 +230,13 @@ pull_files() {
     local local_dir
     local found=0
     local missing=0
+    local current_transfer=0
+    local total_transfers=$(( ${#cases[@]} * ${#FILES_TO_PULL[@]} ))
 
     echo ""
+    echo -e "${BOLD}Pulling ${#cases[@]} case(s), ${#FILES_TO_PULL[@]} file(s) each:${RESET} ${total_transfers} transfer attempt(s)"
+    echo ""
+
     for case_name in "${cases[@]}"; do
         [ -z "${case_name}" ] && continue
         local_dir="${LOCAL_CASES_DIR}/${case_name}"
@@ -213,7 +244,8 @@ pull_files() {
         mkdir -p "${local_dir}"
 
         for file_name in "${FILES_TO_PULL[@]}"; do
-            if copy_file "${case_name}" "${file_name}" "${local_dir}"; then
+            ((current_transfer += 1))
+            if copy_file "${case_name}" "${file_name}" "${local_dir}" "${current_transfer}" "${total_transfers}"; then
                 ((found += 1))
             else
                 ((missing += 1))
