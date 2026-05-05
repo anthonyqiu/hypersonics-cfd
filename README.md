@@ -70,6 +70,12 @@ Export the coarse/refined initial stagnation search-line profile for smoothing d
 python3 scripts/export_initial_search_line.py
 ```
 
+Export ParaView-ready `xy` and `xz` flow slices on the cluster:
+
+```bash
+python3 scripts/export_flow_slices.py
+```
+
 Pull selected results directly from the cluster to a local machine:
 
 ```bash

@@ -65,6 +65,8 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - `submit_cases.py`: builds or submits SLURM jobs for solver runs.
 - `submit_shock_extraction.py`: builds or submits SLURM jobs for the panel shock extractor.
 - `extract_shock_surface.py`: runs the supported panel-based 3D shock-surface extractor.
+- `export_initial_search_line.py`: exports the coarse/refined stagnation search-line profile used to debug shock-sensor smoothing and peak picking.
+- `export_flow_slices.py`: writes ParaView-ready `xy` and `xz` flow slices so local machines can inspect lighter files instead of opening full 3D fields.
 - `check_convergence.py`: checks `history.csv` residuals against a target threshold.
 - `pull_cluster_results.sh`: interactive local-machine helper for copying selected result files directly from cluster case folders into local case folders.
 - `case_selection.py`: shared case discovery, filtering, deduplication, and path resolution helpers.
@@ -111,7 +113,7 @@ Heavy outputs and generated runtime content now live in ignored locations, witho
 
 ### Better support for cluster-to-local workflows
 
-Small derived outputs such as `.vtp` and `.csv` are useful to move off-cluster, but they do not need an intermediate staging area inside the repo. The new `pull_cluster_results.sh` helper copies files directly into local per-case folders, including `.vtp` shock-surface outputs, so case context stays obvious and there is no extra export-bundle workflow to maintain.
+Small derived outputs such as `.vtp` and `.csv` are useful to move off-cluster, but they do not need an intermediate staging area inside the repo. The `pull_cluster_results.sh` helper copies files directly into local per-case folders, including `.vtp` shock-surface outputs, initial-search diagnostics, and pre-sliced flow planes, so case context stays obvious and there is no extra export-bundle workflow to maintain.
 
 ## Research and design justification
 

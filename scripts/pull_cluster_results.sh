@@ -45,6 +45,15 @@ declare -a SURFACE_FILES=(
     "shock_surface_panel.vtp"
 )
 
+declare -a DIAGNOSTIC_FILES=(
+    "initial_search_line_profile.csv"
+)
+
+declare -a FLOW_SLICE_FILES=(
+    "flow_slice_xy.vtp"
+    "flow_slice_xz.vtp"
+)
+
 declare -a LIGHTWEIGHT_FILES=(
     "history.csv"
     "surface_flow.vtu"
@@ -52,6 +61,8 @@ declare -a LIGHTWEIGHT_FILES=(
     "shock_gradient.csv"
     "shock_pressure.csv"
     "${SURFACE_FILES[@]}"
+    "${DIAGNOSTIC_FILES[@]}"
+    "${FLOW_SLICE_FILES[@]}"
 )
 
 declare -a PRIMARY_FILES=(
@@ -62,6 +73,8 @@ declare -a PRIMARY_FILES=(
     "shock_gradient.csv"
     "shock_pressure.csv"
     "${SURFACE_FILES[@]}"
+    "${DIAGNOSTIC_FILES[@]}"
+    "${FLOW_SLICE_FILES[@]}"
 )
 
 declare -a REMOTE_CASE_CANDIDATES=(
@@ -150,6 +163,8 @@ print_file_menu() {
     echo -e "  ${YELLOW}5)${RESET} history.csv + flow.vtu"
     echo -e "  ${YELLOW}6)${RESET} All primary files"
     echo -e "  ${YELLOW}7)${RESET} All lightweight post-processing files"
+    echo -e "  ${YELLOW}8)${RESET} initial search-line diagnostic"
+    echo -e "  ${YELLOW}9)${RESET} pre-sliced flow fields (xy + xz)"
     echo ""
 }
 
@@ -163,6 +178,8 @@ set_files_to_pull() {
         5) FILES_TO_PULL=("history.csv" "flow.vtu") ;;
         6) FILES_TO_PULL=("${PRIMARY_FILES[@]}") ;;
         7) FILES_TO_PULL=("${LIGHTWEIGHT_FILES[@]}") ;;
+        8) FILES_TO_PULL=("${DIAGNOSTIC_FILES[@]}") ;;
+        9) FILES_TO_PULL=("${FLOW_SLICE_FILES[@]}") ;;
         *) die "Invalid choice." ;;
     esac
 }
@@ -267,7 +284,7 @@ resolve_cluster_cases_dir
 mkdir -p "${LOCAL_CASES_DIR}"
 print_header
 print_file_menu
-read -r -p "File type [1-7]: " file_choice
+read -r -p "File type [1-9]: " file_choice
 echo ""
 set_files_to_pull "${file_choice}"
 
