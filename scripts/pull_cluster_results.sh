@@ -70,7 +70,7 @@ declare -a LIGHTWEIGHT_FILES=(
     "shock_gradient.csv"
     "shock_pressure.csv"
     "${SURFACE_FILES[@]}"
-    "${DIAGNOSTIC_FILES[@]}"
+    "${SEARCH_LINE_DIAGNOSTIC_FILES[@]}"
     "${FLOW_SLICE_FILES[@]}"
 )
 
@@ -82,7 +82,7 @@ declare -a PRIMARY_FILES=(
     "shock_gradient.csv"
     "shock_pressure.csv"
     "${SURFACE_FILES[@]}"
-    "${DIAGNOSTIC_FILES[@]}"
+    "${SEARCH_LINE_DIAGNOSTIC_FILES[@]}"
     "${FLOW_SLICE_FILES[@]}"
 )
 
@@ -172,7 +172,7 @@ print_file_menu() {
     echo -e "  ${YELLOW}5)${RESET} history.csv + flow.vtu"
     echo -e "  ${YELLOW}6)${RESET} All primary files"
     echo -e "  ${YELLOW}7)${RESET} All lightweight post-processing files"
-    echo -e "  ${YELLOW}8)${RESET} all search-line diagnostics"
+    echo -e "  ${YELLOW}8)${RESET} all search-line diagnostics (initial + terminated)"
     echo -e "  ${YELLOW}9)${RESET} pre-sliced flow fields (xy + xz)"
     echo -e "  ${YELLOW}10)${RESET} terminated search-line diagnostics only"
     echo ""
