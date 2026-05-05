@@ -28,4 +28,4 @@
 - Case aliases such as `m3_fine -> m3_aoa0` are preserved as symlinks in `data/cases/`.
 - Generated configs use explicit mesh and case-output paths, so outputs still land in each case folder even though the config files live in `build/generated-configs/`.
 - Legacy per-case `config.cfg` and `run.sh` files are removed during staging instead of being archived into the repo.
-- Terminated shock-search lines can be exported with `CFD_EXPORT_TERMINATED_SEARCH_LINES=1`; the extractor writes summary/profile CSVs to `data/cases/<case>/search_line_debug/`.
+- Terminated shock-search lines can be exported with `CFD_EXPORT_TERMINATED_SEARCH_LINES=1`; the extractor writes summary/profile CSVs directly into `data/cases/<case>/`.

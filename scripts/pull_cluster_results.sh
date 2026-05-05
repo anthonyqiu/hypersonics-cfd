@@ -47,14 +47,20 @@ declare -a DIAGNOSTIC_FILES=(
     "initial_search_line_profile.csv"
 )
 
+declare -a SEARCH_LINE_DIAGNOSTIC_FILES=(
+    "initial_search_line_profile.csv"
+    "terminated_search_line_summary.csv"
+    "terminated_search_line_profiles.csv"
+)
+
 declare -a FLOW_SLICE_FILES=(
     "flow_slice_xy.vtp"
     "flow_slice_xz.vtp"
 )
 
-declare -a TERMINATED_SEARCH_LINE_DEBUG_FILES=(
-    "search_line_debug/terminated_search_line_summary.csv"
-    "search_line_debug/terminated_search_line_profiles.csv"
+declare -a TERMINATED_SEARCH_LINE_FILES=(
+    "terminated_search_line_summary.csv"
+    "terminated_search_line_profiles.csv"
 )
 
 declare -a LIGHTWEIGHT_FILES=(
@@ -166,9 +172,9 @@ print_file_menu() {
     echo -e "  ${YELLOW}5)${RESET} history.csv + flow.vtu"
     echo -e "  ${YELLOW}6)${RESET} All primary files"
     echo -e "  ${YELLOW}7)${RESET} All lightweight post-processing files"
-    echo -e "  ${YELLOW}8)${RESET} initial search-line diagnostic"
+    echo -e "  ${YELLOW}8)${RESET} all search-line diagnostics"
     echo -e "  ${YELLOW}9)${RESET} pre-sliced flow fields (xy + xz)"
-    echo -e "  ${YELLOW}10)${RESET} terminated search-line debug CSVs"
+    echo -e "  ${YELLOW}10)${RESET} terminated search-line diagnostics only"
     echo ""
 }
 
@@ -182,9 +188,9 @@ set_files_to_pull() {
         5) FILES_TO_PULL=("history.csv" "flow.vtu") ;;
         6) FILES_TO_PULL=("${PRIMARY_FILES[@]}") ;;
         7) FILES_TO_PULL=("${LIGHTWEIGHT_FILES[@]}") ;;
-        8) FILES_TO_PULL=("${DIAGNOSTIC_FILES[@]}") ;;
+        8) FILES_TO_PULL=("${SEARCH_LINE_DIAGNOSTIC_FILES[@]}") ;;
         9) FILES_TO_PULL=("${FLOW_SLICE_FILES[@]}") ;;
-        10) FILES_TO_PULL=("${TERMINATED_SEARCH_LINE_DEBUG_FILES[@]}") ;;
+        10) FILES_TO_PULL=("${TERMINATED_SEARCH_LINE_FILES[@]}") ;;
         *) die "Invalid choice." ;;
     esac
 }

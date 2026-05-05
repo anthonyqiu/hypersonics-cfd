@@ -108,7 +108,6 @@ shell_iteration_safety_limit = 10000
 # Turn it on for one run with:
 #   CFD_EXPORT_TERMINATED_SEARCH_LINES=1 CFD_CASE=m6_medium python3 scripts/extract_shock_surface.py
 export_terminated_search_lines = False
-terminated_search_line_debug_dir = "search_line_debug"
 terminated_search_line_summary_csv_name = "terminated_search_line_summary.csv"
 terminated_search_line_profiles_csv_name = "terminated_search_line_profiles.csv"
 # 0 means "write every terminated line". Use CFD_TERMINATED_SEARCH_LINE_LIMIT to cap one run.
@@ -376,19 +375,29 @@ class TerminatedSearchLineDebugWriter:
         self.max_lines = max_lines
         self.line_count = 0
         self.sample_count = 0
-        self.debug_dir = case_path / terminated_search_line_debug_dir
-        self.summary_csv_path = self.debug_dir / terminated_search_line_summary_csv_name
-        self.profiles_csv_path = self.debug_dir / terminated_search_line_profiles_csv_name
-        self.old_failed_csv_path = self.debug_dir / "failed_search_lines.csv"
+        self.output_dir = case_path
+        self.summary_csv_path = self.output_dir / terminated_search_line_summary_csv_name
+        self.profiles_csv_path = self.output_dir / terminated_search_line_profiles_csv_name
+        self.old_debug_dir = case_path / "search_line_debug"
+        self.old_debug_paths = (
+            self.old_debug_dir / "failed_search_lines.csv",
+            self.old_debug_dir / terminated_search_line_summary_csv_name,
+            self.old_debug_dir / terminated_search_line_profiles_csv_name,
+        )
         self._summary_handle = None
         self._profile_handle = None
         self._summary_writer: csv.DictWriter | None = None
         self._profile_writer: csv.DictWriter | None = None
 
         if self.enabled:
-            for path in (self.summary_csv_path, self.profiles_csv_path, self.old_failed_csv_path):
+            for path in (self.summary_csv_path, self.profiles_csv_path, *self.old_debug_paths):
                 if path.exists():
                     path.unlink()
+            if self.old_debug_dir.exists():
+                try:
+                    self.old_debug_dir.rmdir()
+                except OSError:
+                    pass
 
     def close(self) -> None:
         if self._summary_handle is not None:
@@ -403,7 +412,7 @@ class TerminatedSearchLineDebugWriter:
     def _ensure_summary_writer(self) -> csv.DictWriter:
         if self._summary_writer is not None:
             return self._summary_writer
-        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self._summary_handle = self.summary_csv_path.open("w", newline="", encoding="utf-8")
         self._summary_writer = csv.DictWriter(self._summary_handle, fieldnames=self.summary_fieldnames)
         self._summary_writer.writeheader()
@@ -412,7 +421,7 @@ class TerminatedSearchLineDebugWriter:
     def _ensure_profile_writer(self) -> csv.DictWriter:
         if self._profile_writer is not None:
             return self._profile_writer
-        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self._profile_handle = self.profiles_csv_path.open("w", newline="", encoding="utf-8")
         self._profile_writer = csv.DictWriter(self._profile_handle, fieldnames=self.profile_fieldnames)
         self._profile_writer.writeheader()
@@ -1515,7 +1524,7 @@ def process_case(paths: StudyPaths, case_dir: str):
         limit_label = "all" if debug_export_limit == 0 else str(debug_export_limit)
         progress(
             f"  [debug] terminated search-line export enabled "
-            f"(limit={limit_label}, folder={debug_writer.debug_dir})"
+            f"(limit={limit_label}, output={debug_writer.summary_csv_path}, {debug_writer.profiles_csv_path})"
         )
     # `dt` controls the shell-to-shell spacing; `dn` controls the sample spacing
     # along each probe line.
@@ -1597,7 +1606,8 @@ def main() -> int:
         limit_label = "all" if limit == 0 else str(limit)
         print(
             f"Terminated search-line debug export: on "
-            f"(limit={limit_label}, folder={terminated_search_line_debug_dir})"
+            f"(limit={limit_label}, files={terminated_search_line_summary_csv_name}, "
+            f"{terminated_search_line_profiles_csv_name})"
         )
 
     cases = cases_from_environment(paths)

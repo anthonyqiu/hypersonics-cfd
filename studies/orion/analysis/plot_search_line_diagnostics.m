@@ -9,8 +9,8 @@ study_dir = fileparts(analysis_dir);
 cases_dir = fullfile(study_dir, 'data', 'cases');
 
 initial_file = 'initial_search_line_profile.csv';
-terminated_profile_file = fullfile('search_line_debug', 'terminated_search_line_profiles.csv');
-terminated_summary_file = fullfile('search_line_debug', 'terminated_search_line_summary.csv');
+terminated_profile_file = 'terminated_search_line_profiles.csv';
+terminated_summary_file = 'terminated_search_line_summary.csv';
 
 if nargin < 1 || strlength(string(case_name)) == 0
     case_name = choose_case_interactively(cases_dir, initial_file, terminated_profile_file);
