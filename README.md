@@ -15,7 +15,7 @@ hypersonics-cfd/
       meshes/               # study meshes (kept local, not in Git history)
       analysis/             # MATLAB helpers and small study notes
       data/                 # case folders and outputs (ignored by Git)
-      build/                # generated configs and manifests (ignored by Git)
+      build/                # generated configs, manifests, and batch logs (ignored by Git)
     ellipsoids/             # placeholder for the next campaign
   templates/
     su2/                    # shared SU2 config templates
@@ -27,10 +27,11 @@ hypersonics-cfd/
 - Keep the active workflow code in `scripts/` so each Python tool has one canonical home.
 - Keep study-specific metadata and canonical inputs under `studies/<campaign>/`.
 - Keep generated configs under `studies/<campaign>/build/`.
-- Keep solver outputs, restart files, logs, and derived artifacts under `studies/<campaign>/data/`.
+- Keep solver outputs, restart files, per-case solver logs, and derived artifacts under `studies/<campaign>/data/`.
 - Treat meshes and geometry as canonical study inputs, but keep very large binary inputs out of ordinary Git history.
 - Delete legacy backups once the managed workflow owns the active layout, instead of preserving duplicate historical copies inside the repo.
 - Render runtime configs with explicit case-folder I/O paths so solver outputs always land under `studies/<campaign>/data/cases/<case>/` even though the configs themselves live in `build/`.
+- Keep study-level batch metadata together by writing shock-extraction manifests and SLURM logs under `studies/<campaign>/build/`.
 
 ## Common commands
 
@@ -58,6 +59,12 @@ Run the interactive shock extractor directly:
 python3 scripts/extract_shock_surface.py
 ```
 
+Export terminated shock search lines while running the extractor:
+
+```bash
+CFD_EXPORT_TERMINATED_SEARCH_LINES=1 CFD_CASE=m3_coarse python3 scripts/extract_shock_surface.py
+```
+
 Check convergence interactively:
 
 ```bash
@@ -68,6 +75,12 @@ Export the coarse/refined initial stagnation search-line profile for smoothing d
 
 ```bash
 python3 scripts/export_initial_search_line.py
+```
+
+Plot the initial profile and terminated search-line profiles in MATLAB:
+
+```matlab
+plot_search_line_diagnostics
 ```
 
 Export ParaView-ready `xy` and `xz` flow slices on the cluster:

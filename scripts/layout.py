@@ -13,6 +13,7 @@ class StudyPaths:
     meshes_dir: Path
     generated_config_dir: Path
     shock_manifest_dir: Path
+    shock_batch_log_dir: Path
     cases_dir: Path
     su2_template: Path
     run_case_script: Path
@@ -21,6 +22,12 @@ class StudyPaths:
     def case_path(self, case_name: str) -> Path:
         return self.cases_dir / case_name
 
+    def case_logs_dir(self, case_name: str) -> Path:
+        return self.case_path(case_name) / "logs"
+
+    def solver_logs_dir(self, case_name: str) -> Path:
+        return self.case_logs_dir(case_name) / "solver"
+
     def generated_config_path(self, case_name: str) -> Path:
         return self.generated_config_dir / f"{case_name}.cfg"
 
@@ -28,8 +35,12 @@ class StudyPaths:
         for path in (
             self.generated_config_dir,
             self.shock_manifest_dir,
+            self.shock_batch_log_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+    def ensure_case_runtime_dirs(self, case_name: str) -> None:
+        self.solver_logs_dir(case_name).mkdir(parents=True, exist_ok=True)
 
 
 def repo_root() -> Path:
@@ -61,6 +72,7 @@ def get_study_paths(study_name: str = "orion") -> StudyPaths:
         meshes_dir=study_root / "meshes",
         generated_config_dir=study_root / "build" / "generated-configs",
         shock_manifest_dir=study_root / "build" / "manifests",
+        shock_batch_log_dir=study_root / "build" / "logs" / "shock-extraction",
         cases_dir=study_root / "data" / "cases",
         su2_template=root / "templates" / "su2" / "base.cfg",
         run_case_script=root / "templates" / "slurm" / "run_su2_case.sh",

@@ -18,6 +18,11 @@ RESULT_PATTERNS = (
     "shock.csv",
     "shock_*.csv",
     "shock_*.vtp",
+    "logs/solver/solver_*.out",
+    "logs/solver/solver_*.err",
+    "logs/solver/orion_*.out",
+    "logs/solver/orion_*.err",
+    "logs/solver/slurm-*.out",
     "solver_*.out",
     "solver_*.err",
     "orion_*.out",
@@ -35,7 +40,9 @@ def has_nonrestart_outputs(case_dir: Path) -> bool:
 
 
 def build_sbatch_command(paths: StudyPaths, spec: dict[str, object], case_dir: Path) -> list[str]:
+    case_name = str(spec["case_name"])
     generated_cfg = paths.generated_config_path(str(spec["case_name"]))
+    solver_logs_dir = paths.solver_logs_dir(case_name)
     return [
         "sbatch",
         "--export=NONE",
@@ -55,9 +62,9 @@ def build_sbatch_command(paths: StudyPaths, spec: dict[str, object], case_dir: P
         "--account",
         str(spec["job_account"]),
         "--output",
-        "solver_%j.out",
+        str(solver_logs_dir / "solver_%j.out"),
         "--error",
-        "solver_%j.err",
+        str(solver_logs_dir / "solver_%j.err"),
         "--chdir",
         str(case_dir),
         str(paths.run_case_script),
@@ -165,6 +172,7 @@ def main() -> int:
             continue
 
         stage_case(paths, spec, template_text)
+        paths.ensure_case_runtime_dirs(str(spec["case_name"]))
         try:
             completed = subprocess.run(command, check=True, text=True, capture_output=True)
         except subprocess.CalledProcessError as exc:

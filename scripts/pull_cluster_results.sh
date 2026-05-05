@@ -41,8 +41,6 @@ declare -a FILES_TO_PULL=()
 declare -a SURFACE_FILES=(
     "shock_surface.csv"
     "shock_surface.vtp"
-    "shock_surface_panel.csv"
-    "shock_surface_panel.vtp"
 )
 
 declare -a DIAGNOSTIC_FILES=(
@@ -52,6 +50,11 @@ declare -a DIAGNOSTIC_FILES=(
 declare -a FLOW_SLICE_FILES=(
     "flow_slice_xy.vtp"
     "flow_slice_xz.vtp"
+)
+
+declare -a TERMINATED_SEARCH_LINE_DEBUG_FILES=(
+    "search_line_debug/terminated_search_line_summary.csv"
+    "search_line_debug/terminated_search_line_profiles.csv"
 )
 
 declare -a LIGHTWEIGHT_FILES=(
@@ -165,6 +168,7 @@ print_file_menu() {
     echo -e "  ${YELLOW}7)${RESET} All lightweight post-processing files"
     echo -e "  ${YELLOW}8)${RESET} initial search-line diagnostic"
     echo -e "  ${YELLOW}9)${RESET} pre-sliced flow fields (xy + xz)"
+    echo -e "  ${YELLOW}10)${RESET} terminated search-line debug CSVs"
     echo ""
 }
 
@@ -180,6 +184,7 @@ set_files_to_pull() {
         7) FILES_TO_PULL=("${LIGHTWEIGHT_FILES[@]}") ;;
         8) FILES_TO_PULL=("${DIAGNOSTIC_FILES[@]}") ;;
         9) FILES_TO_PULL=("${FLOW_SLICE_FILES[@]}") ;;
+        10) FILES_TO_PULL=("${TERMINATED_SEARCH_LINE_DEBUG_FILES[@]}") ;;
         *) die "Invalid choice." ;;
     esac
 }
@@ -231,6 +236,7 @@ copy_file() {
     fi
 
     echo -e "    ${CYAN}${progress_label}${RESET} ${BOLD}Downloading${RESET} ${file_name}"
+    mkdir -p "$(dirname -- "${local_dir}/${file_name}")"
     if scp -o LogLevel=ERROR "${REMOTE_HOST}:${remote_path}" "${local_dir}/${file_name}"; then
         echo -e "    ${CYAN}${progress_label}${RESET} ${GREEN}OK${RESET} ${file_name}"
         return 0
@@ -284,7 +290,7 @@ resolve_cluster_cases_dir
 mkdir -p "${LOCAL_CASES_DIR}"
 print_header
 print_file_menu
-read -r -p "File type [1-9]: " file_choice
+read -r -p "File type [1-10]: " file_choice
 echo ""
 set_files_to_pull "${file_choice}"
 

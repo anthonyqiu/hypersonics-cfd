@@ -24,6 +24,12 @@ The main outputs are written into the case folder:
 - `shock_surface.csv`
 - `shock_surface.vtp`
 
+For debugging missing panels, set `CFD_EXPORT_TERMINATED_SEARCH_LINES=1` before running the
+extractor. Terminated search-line data is written inside the case folder:
+`search_line_debug/terminated_search_line_summary.csv` stores one metadata row per line, and
+`search_line_debug/terminated_search_line_profiles.csv` stores one profile row per line with
+arrays as functions of the local `n` search-line coordinate.
+
 ## Geometry and AoA handling
 
 [`scripts/extract_shock_surface.py`](/scratch/anthonyy/hypersonics-cfd/scripts/extract_shock_surface.py) now contains the geometry helpers directly. They are responsible for:

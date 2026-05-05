@@ -10,7 +10,8 @@
 - `analysis/`: non-production helpers such as MATLAB plotting and lightweight study notes. See `analysis/README.md`.
 - `build/generated-configs/`: rendered SU2 configs for managed cases. Generated at runtime.
 - `build/manifests/`: generated batch manifests, especially for shock extraction jobs.
-- `data/cases/`: solver outputs grouped by case name.
+- `build/logs/shock-extraction/`: batch-level SLURM logs for shock extraction submissions.
+- `data/cases/`: solver outputs grouped by case name, with per-case solver logs under `logs/solver/`.
 
 ## Managed workflow
 
@@ -27,3 +28,4 @@
 - Case aliases such as `m3_fine -> m3_aoa0` are preserved as symlinks in `data/cases/`.
 - Generated configs use explicit mesh and case-output paths, so outputs still land in each case folder even though the config files live in `build/generated-configs/`.
 - Legacy per-case `config.cfg` and `run.sh` files are removed during staging instead of being archived into the repo.
+- Terminated shock-search lines can be exported with `CFD_EXPORT_TERMINATED_SEARCH_LINES=1`; the extractor writes summary/profile CSVs to `data/cases/<case>/search_line_debug/`.

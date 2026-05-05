@@ -100,6 +100,20 @@ panel_prediction_tolerance_dt_factor = 2
 panel_fit_node_count = 5
 minimum_azimuth_rays = 12
 
+# This is only a runaway-loop guard. Normal extraction should stop because a shell fails
+# or becomes too sparse to form a reliable surface, not because this limit is reached.
+shell_iteration_safety_limit = 10000
+
+# Terminated search-line debugging is off by default because it can write many rows.
+# Turn it on for one run with:
+#   CFD_EXPORT_TERMINATED_SEARCH_LINES=1 CFD_CASE=m6_medium python3 scripts/extract_shock_surface.py
+export_terminated_search_lines = False
+terminated_search_line_debug_dir = "search_line_debug"
+terminated_search_line_summary_csv_name = "terminated_search_line_summary.csv"
+terminated_search_line_profiles_csv_name = "terminated_search_line_profiles.csv"
+# 0 means "write every terminated line". Use CFD_TERMINATED_SEARCH_LINE_LIMIT to cap one run.
+terminated_search_line_max_lines = 0
+
 suppress_vtk_warnings = True
 # ---------------------------------------------
 
@@ -250,6 +264,29 @@ def progress(message: str):
     print(message, flush=True)
 
 
+def env_flag(name: str, default: bool) -> bool:
+    """Read a boolean environment override without needing command-line arguments."""
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    if value in {"1", "true", "yes", "on", "y"}:
+        return True
+    if value in {"0", "false", "no", "off", "n"}:
+        return False
+    raise ValueError(f"{name} must be true/false, got {value!r}")
+
+
+def env_int(name: str, default: int) -> int:
+    """Read an integer environment override."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"{name} must be nonnegative")
+    return parsed
+
+
 @contextmanager
 def timed_stage(stage_times: dict[str, float], stage_name: str):
     """
@@ -265,6 +302,259 @@ def timed_stage(stage_times: dict[str, float], stage_name: str):
         elapsed_seconds = time.perf_counter() - stage_start
         stage_times[stage_name] = elapsed_seconds
         progress(f"  [time ] {stage_name}: {elapsed_seconds:.1f} s")
+
+
+class TerminatedSearchLineDebugWriter:
+    """
+    Stream terminated line-search profiles into compact per-case CSVs.
+
+    The plotter needs profiles as functions of `n`, the local coordinate along each search
+    line. To keep "export every terminated line" realistic, each CSV row stores one full
+    search-line profile with semicolon-separated arrays instead of one row per sample.
+    """
+
+    summary_fieldnames = [
+        "debug_line_id",
+        "reason",
+        "stage",
+        "shell_layer",
+        "ray_index",
+        "azimuth_radians",
+        "target_radius",
+        "prediction_error",
+        "prediction_tolerance",
+        "line_mode_code",
+        "candidate_index",
+        "candidate_n",
+        "candidate_smoothed",
+        "line_center_x",
+        "line_center_y",
+        "line_center_z",
+        "line_direction_x",
+        "line_direction_y",
+        "line_direction_z",
+        "half_length",
+        "sample_spacing",
+        "savgol_window_points",
+        "savgol_smoothing_length",
+        "savgol_poly_order",
+        "dt",
+        "dn",
+        "sample_count",
+        "valid_sample_count",
+        "max_smoothed_sensor",
+        "max_smoothed_sensor_n",
+    ]
+
+    profile_fieldnames = [
+        "debug_line_id",
+        "reason",
+        "stage",
+        "shell_layer",
+        "ray_index",
+        "azimuth_radians",
+        "target_radius",
+        "prediction_error",
+        "prediction_tolerance",
+        "line_mode_code",
+        "candidate_index",
+        "candidate_n",
+        "candidate_smoothed",
+        "n",
+        "x",
+        "y",
+        "z",
+        "density",
+        "shock_sensor_raw",
+        "shock_sensor_smoothed",
+        "valid_mask",
+        "is_candidate",
+    ]
+
+    def __init__(self, case_path: Path, enabled: bool, max_lines: int):
+        self.enabled = enabled
+        self.max_lines = max_lines
+        self.line_count = 0
+        self.sample_count = 0
+        self.debug_dir = case_path / terminated_search_line_debug_dir
+        self.summary_csv_path = self.debug_dir / terminated_search_line_summary_csv_name
+        self.profiles_csv_path = self.debug_dir / terminated_search_line_profiles_csv_name
+        self.old_failed_csv_path = self.debug_dir / "failed_search_lines.csv"
+        self._summary_handle = None
+        self._profile_handle = None
+        self._summary_writer: csv.DictWriter | None = None
+        self._profile_writer: csv.DictWriter | None = None
+
+        if self.enabled:
+            for path in (self.summary_csv_path, self.profiles_csv_path, self.old_failed_csv_path):
+                if path.exists():
+                    path.unlink()
+
+    def close(self) -> None:
+        if self._summary_handle is not None:
+            self._summary_handle.close()
+            self._summary_handle = None
+            self._summary_writer = None
+        if self._profile_handle is not None:
+            self._profile_handle.close()
+            self._profile_handle = None
+            self._profile_writer = None
+
+    def _ensure_summary_writer(self) -> csv.DictWriter:
+        if self._summary_writer is not None:
+            return self._summary_writer
+        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        self._summary_handle = self.summary_csv_path.open("w", newline="", encoding="utf-8")
+        self._summary_writer = csv.DictWriter(self._summary_handle, fieldnames=self.summary_fieldnames)
+        self._summary_writer.writeheader()
+        return self._summary_writer
+
+    def _ensure_profile_writer(self) -> csv.DictWriter:
+        if self._profile_writer is not None:
+            return self._profile_writer
+        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        self._profile_handle = self.profiles_csv_path.open("w", newline="", encoding="utf-8")
+        self._profile_writer = csv.DictWriter(self._profile_handle, fieldnames=self.profile_fieldnames)
+        self._profile_writer.writeheader()
+        return self._profile_writer
+
+    @staticmethod
+    def _encode_float_array(values: np.ndarray) -> str:
+        return ";".join(f"{float(value):.10g}" for value in np.asarray(values).ravel())
+
+    @staticmethod
+    def _encode_int_array(values: np.ndarray) -> str:
+        return ";".join(str(int(value)) for value in np.asarray(values).ravel())
+
+    def write_search_line(
+        self,
+        *,
+        reason: str,
+        stage: str,
+        line_sample: dict[str, np.ndarray],
+        line_center: np.ndarray,
+        line_direction: np.ndarray,
+        half_length: float,
+        dt: float,
+        dn: float,
+        shell_layer: int,
+        ray_index: int,
+        azimuth_radians: float,
+        target_radius: float,
+        line_mode: int,
+        candidate: dict[str, float | int | np.ndarray] | None = None,
+        prediction_error: float = float("nan"),
+        prediction_tolerance: float = float("nan"),
+    ) -> None:
+        if not self.enabled:
+            return
+        if self.max_lines > 0 and self.line_count >= self.max_lines:
+            return
+
+        smoothed = smooth_line_profile(
+            line_sample["shock_sensor_raw"],
+            line_sample["valid_mask"],
+            line_sample["line_coordinates"],
+        )
+        if line_sample["line_coordinates"].size >= 2:
+            sample_spacing = abs(
+                float(line_sample["line_coordinates"][1]) - float(line_sample["line_coordinates"][0])
+            )
+        else:
+            sample_spacing = float(dn)
+
+        valid_idx = np.flatnonzero(line_sample["valid_mask"])
+        if valid_idx.size > 0:
+            segment_size = int(valid_idx[-1] - valid_idx[0] + 1)
+            window_points = autoscaled_savgol_window_points(sample_spacing, segment_size)
+        else:
+            window_points = 0
+
+        n_coordinates = np.asarray(line_sample["line_coordinates"], dtype=float)
+        points = np.asarray(line_sample["points"], dtype=float)
+        density = np.asarray(line_sample["density"], dtype=float)
+        shock_sensor_raw = np.asarray(line_sample["shock_sensor_raw"], dtype=float)
+        valid_mask = np.asarray(line_sample["valid_mask"], dtype=bool)
+
+        candidate_index = int(candidate["sample_index"]) if candidate is not None else -1
+        candidate_n = (
+            float(candidate["line_coordinate"]) if candidate is not None else float("nan")
+        )
+        candidate_smoothed = (
+            float(candidate["shock_sensor_smoothed"]) if candidate is not None else float("nan")
+        )
+        is_candidate = np.zeros(n_coordinates.size, dtype=int)
+        if 0 <= candidate_index < is_candidate.size:
+            is_candidate[candidate_index] = 1
+
+        if smoothed.size > 0:
+            max_index = int(np.nanargmax(smoothed))
+            max_smoothed_sensor = float(smoothed[max_index])
+            max_smoothed_sensor_n = float(n_coordinates[max_index])
+        else:
+            max_smoothed_sensor = float("nan")
+            max_smoothed_sensor_n = float("nan")
+
+        self.line_count += 1
+        debug_line_id = self.line_count
+        summary_writer = self._ensure_summary_writer()
+        profile_writer = self._ensure_profile_writer()
+        center = np.asarray(line_center, dtype=float)
+        direction = np.asarray(line_direction, dtype=float)
+
+        common_metadata = {
+            "debug_line_id": debug_line_id,
+            "reason": reason,
+            "stage": stage,
+            "shell_layer": int(shell_layer),
+            "ray_index": int(ray_index),
+            "azimuth_radians": float(azimuth_radians),
+            "target_radius": float(target_radius),
+            "prediction_error": float(prediction_error),
+            "prediction_tolerance": float(prediction_tolerance),
+            "line_mode_code": int(line_mode),
+            "candidate_index": candidate_index,
+            "candidate_n": candidate_n,
+            "candidate_smoothed": candidate_smoothed,
+        }
+
+        summary_writer.writerow(
+            {
+                **common_metadata,
+                "line_center_x": float(center[0]),
+                "line_center_y": float(center[1]),
+                "line_center_z": float(center[2]),
+                "line_direction_x": float(direction[0]),
+                "line_direction_y": float(direction[1]),
+                "line_direction_z": float(direction[2]),
+                "half_length": float(half_length),
+                "sample_spacing": float(sample_spacing),
+                "savgol_window_points": int(window_points),
+                "savgol_smoothing_length": float(savgol_smoothing_length),
+                "savgol_poly_order": int(savgol_poly_order),
+                "dt": float(dt),
+                "dn": float(dn),
+                "sample_count": int(n_coordinates.size),
+                "valid_sample_count": int(np.count_nonzero(valid_mask)),
+                "max_smoothed_sensor": max_smoothed_sensor,
+                "max_smoothed_sensor_n": max_smoothed_sensor_n,
+            }
+        )
+        profile_writer.writerow(
+            {
+                **common_metadata,
+                "n": self._encode_float_array(n_coordinates),
+                "x": self._encode_float_array(points[:, 0]),
+                "y": self._encode_float_array(points[:, 1]),
+                "z": self._encode_float_array(points[:, 2]),
+                "density": self._encode_float_array(density),
+                "shock_sensor_raw": self._encode_float_array(shock_sensor_raw),
+                "shock_sensor_smoothed": self._encode_float_array(smoothed),
+                "valid_mask": self._encode_int_array(valid_mask.astype(int)),
+                "is_candidate": self._encode_int_array(is_candidate),
+            }
+        )
+        self.sample_count += int(n_coordinates.size)
 
 
 # --- Build simple 1D node lines -----------------------------------------------
@@ -658,6 +948,11 @@ def predictor_corrector_candidate(
     half_length: float,
     normal_step: float,
     min_height: float,
+    dt: float,
+    prediction_tolerance: float,
+    debug_writer: TerminatedSearchLineDebugWriter | None,
+    shell_index: int,
+    ray_index: int,
 ) -> tuple[dict[str, float | int | np.ndarray] | None, float]:
     """
     Do one panel-based predictor/corrector pass for a single shell-ray location.
@@ -687,6 +982,23 @@ def predictor_corrector_candidate(
         fallback_global=True,
     )
     if initial_candidate is None:
+        if debug_writer is not None:
+            debug_writer.write_search_line(
+                reason="panel_initial_no_candidate",
+                stage="panel_initial",
+                line_sample=initial_sample,
+                line_center=initial_center,
+                line_direction=initial_direction,
+                half_length=half_length,
+                dt=dt,
+                dn=normal_step,
+                shell_layer=shell_index,
+                ray_index=ray_index,
+                azimuth_radians=theta,
+                target_radius=target_radius,
+                line_mode=LINE_MODE_PANEL_GUIDED,
+                prediction_tolerance=prediction_tolerance,
+            )
         return None, 0.0
 
     provisional_point = np.asarray(initial_candidate["point"], dtype=float)
@@ -711,9 +1023,49 @@ def predictor_corrector_candidate(
         fallback_global=True,
     )
     if corrected_candidate is None:
-        return initial_candidate, abs(float(initial_candidate["line_coordinate"]))
+        prediction_error = abs(float(initial_candidate["line_coordinate"]))
+        if prediction_error > prediction_tolerance and debug_writer is not None:
+            debug_writer.write_search_line(
+                reason="panel_prediction_tolerance_rejected",
+                stage="panel_initial",
+                line_sample=initial_sample,
+                line_center=initial_center,
+                line_direction=initial_direction,
+                half_length=half_length,
+                dt=dt,
+                dn=normal_step,
+                shell_layer=shell_index,
+                ray_index=ray_index,
+                azimuth_radians=theta,
+                target_radius=target_radius,
+                line_mode=LINE_MODE_PANEL_GUIDED,
+                candidate=initial_candidate,
+                prediction_error=prediction_error,
+                prediction_tolerance=prediction_tolerance,
+            )
+        return initial_candidate, prediction_error
 
-    return corrected_candidate, abs(float(corrected_candidate["line_coordinate"]))
+    prediction_error = abs(float(corrected_candidate["line_coordinate"]))
+    if prediction_error > prediction_tolerance and debug_writer is not None:
+        debug_writer.write_search_line(
+            reason="panel_prediction_tolerance_rejected",
+            stage="panel_corrected",
+            line_sample=corrected_sample,
+            line_center=corrected_center,
+            line_direction=corrected_direction,
+            half_length=half_length,
+            dt=dt,
+            dn=normal_step,
+            shell_layer=shell_index,
+            ray_index=ray_index,
+            azimuth_radians=theta,
+            target_radius=target_radius,
+            line_mode=LINE_MODE_PANEL_GUIDED,
+            candidate=corrected_candidate,
+            prediction_error=prediction_error,
+            prediction_tolerance=prediction_tolerance,
+        )
+    return corrected_candidate, prediction_error
 
 
 # --- Main shock-surface marching routine --------------------------------------
@@ -725,7 +1077,8 @@ def extract_panel_surface(
     streamwise: np.ndarray,
     normal: np.ndarray,
     spanwise: np.ndarray,
-) -> tuple[pv.PolyData, dict[str, float | int]]:
+    debug_writer: TerminatedSearchLineDebugWriter | None = None,
+) -> tuple[pv.PolyData, dict[str, float | int | str]]:
     """
     Main panel-method shock extraction loop.
 
@@ -747,10 +1100,10 @@ def extract_panel_surface(
     max_surface_radius = max(float(np.max(perpendicular_radius(active_points, streamwise))), dt)
     azimuth_angles = build_surface_azimuth_rays(max_surface_radius, dt)
     ray_count = len(azimuth_angles)
-    max_shell_count = max(1, int(math.ceil(max_surface_radius / dt)) + 2)
+    max_shell_count = int(shell_iteration_safety_limit)
     progress(
         f"  [stage] marching shock surface with {ray_count} rays, dt={dt:.4f}, dn={dn:.4f}, "
-        f"max_shells~{max_shell_count}"
+        f"safety_limit={max_shell_count}"
     )
 
     # `accepted_rows` stores one metadata dictionary per accepted shock node.
@@ -798,6 +1151,13 @@ def extract_panel_surface(
         f"y={stagnation_point[1]:.4f}, z={stagnation_point[2]:.4f}, peak={center_peak:.3f}"
     )
 
+    termination_reason = "reached_safety_limit"
+    termination_shell = max_shell_count
+    termination_detail = (
+        f"completed the runaway safety limit of {max_shell_count} shells; "
+        "this should not happen during normal extraction"
+    )
+
     # March outward shell by shell. Each shell contains one candidate node line per ray.
     for shell_index in range(1, max_shell_count + 1):
         shell_radius = float(shell_index) * dt
@@ -806,6 +1166,8 @@ def extract_panel_surface(
         accepted_rows_in_shell: list[dict[str, float | int]] = []
         streamwise_accept_count = 0
         panel_guided_accept_count = 0
+        no_candidate_count = 0
+        tolerance_reject_count = 0
         progress(f"  [shell {shell_index}] radius_surface={shell_radius:.4f}")
         for ray_index, theta in enumerate(azimuth_angles):
             radial_unit = radial_unit_vector(theta, normal, spanwise)
@@ -825,6 +1187,22 @@ def extract_panel_surface(
                     selection_mode=PEAK_MODE_FIRST_UPSTREAM,
                     fallback_global=True,
                 )
+                if candidate is None and debug_writer is not None:
+                    debug_writer.write_search_line(
+                        reason="streamwise_no_candidate",
+                        stage="shell1_streamwise",
+                        line_sample=line_sample,
+                        line_center=line_center,
+                        line_direction=line_direction,
+                        half_length=half_length,
+                        dt=dt,
+                        dn=normal_step,
+                        shell_layer=shell_index,
+                        ray_index=ray_index,
+                        azimuth_radians=theta,
+                        target_radius=shell_radius,
+                        line_mode=LINE_MODE_STREAMWISE,
+                    )
                 prediction_error = 0.0
             else:
                 # Later shells can use the ray's previously accepted nodes to predict a better
@@ -841,15 +1219,23 @@ def extract_panel_surface(
                     search_line_half_length,
                     normal_step,
                     sensor_floor,
+                    dt,
+                    prediction_tolerance,
+                    debug_writer,
+                    shell_index,
+                    ray_index,
                 )
                 if candidate is None:
+                    no_candidate_count += 1
                     continue
                 # Reject panel candidates that drift too far from the panel prediction.
                 if prediction_error > prediction_tolerance:
+                    tolerance_reject_count += 1
                     continue
                 line_mode = LINE_MODE_PANEL_GUIDED
 
             if candidate is None:
+                no_candidate_count += 1
                 continue
 
             point = np.asarray(candidate["point"], dtype=float)
@@ -877,13 +1263,40 @@ def extract_panel_surface(
 
         # If an entire shell finds no accepted shock nodes, the outward marching stops here.
         if not accepted_rows_in_shell:
+            termination_reason = "empty_shell"
+            termination_shell = shell_index
+            termination_detail = (
+                f"shell {shell_index} accepted 0/{ray_count} nodes "
+                f"({no_candidate_count} no-candidate, {tolerance_reject_count} tolerance-rejected)"
+            )
             progress(f"  [shell {shell_index}] accepted 0/{ray_count} shock nodes -> stopping")
             break
 
-        progress(
+        shell_message = (
             f"  [shell {shell_index}] accepted {len(accepted_rows_in_shell)}/{ray_count} shock nodes "
             f"({streamwise_accept_count} streamwise, {panel_guided_accept_count} panel-guided)"
         )
+        if no_candidate_count or tolerance_reject_count:
+            shell_message += (
+                f", terminated lines: {no_candidate_count} no-candidate, "
+                f"{tolerance_reject_count} tolerance-rejected"
+            )
+        progress(shell_message)
+
+        # A mostly failed shell can create long, spiky strips if we keep marching.
+        # Once fewer than this many rays survive, treat the shock surface as ended.
+        if len(accepted_rows_in_shell) < minimum_azimuth_rays:
+            termination_reason = "too_few_accepted_rays"
+            termination_shell = shell_index
+            termination_detail = (
+                f"shell {shell_index} accepted {len(accepted_rows_in_shell)}/{ray_count} nodes, "
+                f"below minimum_azimuth_rays={minimum_azimuth_rays}"
+            )
+            progress(
+                f"  [shell {shell_index}] fewer than {minimum_azimuth_rays} accepted rays "
+                "-> stopping before adding this sparse shell"
+            )
+            break
 
         # Only commit a shell after the full ring has been tested.
         for row in accepted_rows_in_shell:
@@ -894,6 +1307,11 @@ def extract_panel_surface(
             shock_node_index_by_shell_ray[shell_ray] = local_idx
             accepted_rows.append(row)
             ray_history[int(row["ray_index"])].append(row)
+
+    progress(
+        f"  [stop] marching termination: {termination_reason} "
+        f"(shell={termination_shell}, {termination_detail})"
+    )
 
     # Build the actual ParaView surface object, then attach the per-point metadata so
     # the same information is available in ParaView and in the CSV export.
@@ -957,7 +1375,7 @@ def extract_panel_surface(
         poly.faces = np.asarray(faces, dtype=np.int64)
     progress(f"  [stage] surface triangulation complete ({poly.n_points} points, {poly.n_cells} cells)")
 
-    summary: dict[str, float | int] = {
+    summary: dict[str, float | int | str] = {
         "point_count": poly.n_points,
         "cell_count": poly.n_cells,
         "center_peak": center_peak,
@@ -967,6 +1385,8 @@ def extract_panel_surface(
         "dn": dn,
         "ray_count": ray_count,
         "max_shell_layer": max_shell_layer,
+        "termination_reason": termination_reason,
+        "termination_shell": termination_shell,
         "panel_lines": sum(1 for row in accepted_rows if int(row["line_mode"]) == LINE_MODE_PANEL_GUIDED),
         "streamwise_lines": sum(1 for row in accepted_rows if int(row["line_mode"]) == LINE_MODE_STREAMWISE),
     }
@@ -1088,16 +1508,28 @@ def process_case(paths: StudyPaths, case_dir: str):
             raise ValueError("no active points passed the surface sensor threshold")
 
     dt, dn = configured_sampling_steps()
+    debug_export_enabled = env_flag("CFD_EXPORT_TERMINATED_SEARCH_LINES", export_terminated_search_lines)
+    debug_export_limit = env_int("CFD_TERMINATED_SEARCH_LINE_LIMIT", terminated_search_line_max_lines)
+    debug_writer = TerminatedSearchLineDebugWriter(case_path, debug_export_enabled, debug_export_limit)
+    if debug_export_enabled:
+        limit_label = "all" if debug_export_limit == 0 else str(debug_export_limit)
+        progress(
+            f"  [debug] terminated search-line export enabled "
+            f"(limit={limit_label}, folder={debug_writer.debug_dir})"
+        )
     # `dt` controls the shell-to-shell spacing; `dn` controls the sample spacing
     # along each probe line.
     progress(
         f"  [stage] extracting shock surface (active points={active_points.shape[0]}, "
         f"dt={dt:.4f}, dn={dn:.4f})"
     )
-    with timed_stage(stage_times, "extract shock surface"):
-        surface, summary = extract_panel_surface(
-            gradient_mesh, active_points, dt, dn, streamwise, normal, spanwise
-        )
+    try:
+        with timed_stage(stage_times, "extract shock surface"):
+            surface, summary = extract_panel_surface(
+                gradient_mesh, active_points, dt, dn, streamwise, normal, spanwise, debug_writer=debug_writer
+            )
+    finally:
+        debug_writer.close()
     progress("  [stage] writing surface outputs")
     with timed_stage(stage_times, "write surface outputs"):
         surface_path, csv_path = write_surface_outputs(case_path, surface)
@@ -1111,6 +1543,18 @@ def process_case(paths: StudyPaths, case_dir: str):
         f"max_shell={summary['max_shell_layer']}, elapsed={elapsed_seconds / 60.0:.1f} min)"
     )
     progress(f"  [ok ] wrote {csv_path}")
+    progress(
+        f"  [stop] termination summary: {summary['termination_reason']} "
+        f"at shell {summary['termination_shell']}"
+    )
+    if debug_export_enabled:
+        if debug_writer.line_count > 0:
+            progress(
+                f"  [debug] wrote {debug_writer.summary_csv_path} and {debug_writer.profiles_csv_path} "
+                f"({debug_writer.line_count} terminated lines, {debug_writer.sample_count} samples)"
+            )
+        else:
+            progress("  [debug] no terminated search lines were exported")
     progress("  [time ] timing summary:")
     for stage_name, stage_seconds in stage_times.items():
         progress(f"  [time ]   {stage_name}: {stage_seconds:.1f} s")
@@ -1148,6 +1592,13 @@ def main() -> int:
         f"sensor floor: {surface_sensor_min_fraction:g} of center peak, "
         f"savgol smoothing length/poly: {savgol_smoothing_length:.4f}/{savgol_poly_order}"
     )
+    if env_flag("CFD_EXPORT_TERMINATED_SEARCH_LINES", export_terminated_search_lines):
+        limit = env_int("CFD_TERMINATED_SEARCH_LINE_LIMIT", terminated_search_line_max_lines)
+        limit_label = "all" if limit == 0 else str(limit)
+        print(
+            f"Terminated search-line debug export: on "
+            f"(limit={limit_label}, folder={terminated_search_line_debug_dir})"
+        )
 
     cases = cases_from_environment(paths)
     if not cases:
