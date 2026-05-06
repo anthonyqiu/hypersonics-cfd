@@ -91,8 +91,9 @@ line_peak_prominence_fraction = 0.02
 
 # Stagnation search refinement:
 # - first scan the long stagnation line with a coarse spacing
-# - then resample a smaller window around that coarse peak using the normal `dn`
+# - then resample a smaller window around that coarse peak using a finer fraction of `dn`
 stagnation_coarse_step_factor = 10.0
+stagnation_refined_step_factor = 0.2
 
 # Panel-guided search-line settings used after the first shell.
 search_line_half_length_factor = 10.0
@@ -112,6 +113,8 @@ terminated_search_line_summary_csv_name = "terminated_search_line_summary.csv"
 terminated_search_line_profiles_csv_name = "terminated_search_line_profiles.csv"
 # 0 means "write every terminated line". Use CFD_TERMINATED_SEARCH_LINE_LIMIT to cap one run.
 terminated_search_line_max_lines = 0
+# Write one terminated line profile every N terminated lines so the debug CSV stays manageable.
+terminated_search_line_stride = 50
 
 suppress_vtk_warnings = True
 # ---------------------------------------------
@@ -370,9 +373,11 @@ class TerminatedSearchLineDebugWriter:
         "is_candidate",
     ]
 
-    def __init__(self, case_path: Path, enabled: bool, max_lines: int):
+    def __init__(self, case_path: Path, enabled: bool, max_lines: int, line_stride: int):
         self.enabled = enabled
         self.max_lines = max_lines
+        self.line_stride = max(1, int(line_stride))
+        self.observed_line_count = 0
         self.line_count = 0
         self.sample_count = 0
         self.output_dir = case_path
@@ -457,6 +462,9 @@ class TerminatedSearchLineDebugWriter:
     ) -> None:
         if not self.enabled:
             return
+        self.observed_line_count += 1
+        if (self.observed_line_count - 1) % self.line_stride != 0:
+            return
         if self.max_lines > 0 and self.line_count >= self.max_lines:
             return
 
@@ -505,7 +513,7 @@ class TerminatedSearchLineDebugWriter:
             max_smoothed_sensor_n = float("nan")
 
         self.line_count += 1
-        debug_line_id = self.line_count
+        debug_line_id = self.observed_line_count
         summary_writer = self._ensure_summary_writer()
         profile_writer = self._ensure_profile_writer()
         center = np.asarray(line_center, dtype=float)
@@ -663,9 +671,10 @@ def build_stagnation_search_diagnostics(
     Build the coarse/refined diagnostics for the first stagnation search line.
 
     The full stagnation line can be long, so the coarse pass cheaply localizes the shock.
-    We then resample only one coarse interval around that location using the normal fine `dn`.
+    We then resample only one coarse interval around that location using a finer fraction of `dn`.
     """
     coarse_step = max(dn, stagnation_coarse_step_factor * dn)
+    refined_step = max(dn * stagnation_refined_step_factor, np.finfo(float).eps)
     line_direction = np.asarray(streamwise, dtype=float)
     coarse_center = np.asarray(stream_center, dtype=float) * line_direction
 
@@ -693,14 +702,14 @@ def build_stagnation_search_diagnostics(
     refine_center = np.asarray(coarse_candidate["point"], dtype=float)
     progress(
         f"  [stage] refining stagnation node line around coarse peak "
-        f"(half_length={refine_half_length:.4f}, step={dn:.4f})"
+        f"(half_length={refine_half_length:.4f}, step={refined_step:.4f})"
     )
     refined_sample = sample_line(
         gradient_mesh,
         refine_center,
         np.asarray(streamwise, dtype=float),
         refine_half_length,
-        dn,
+        refined_step,
     )
     refined_candidate = find_shock_node_on_line(
         refined_sample,
@@ -724,7 +733,7 @@ def build_stagnation_search_diagnostics(
             "line_center": refine_center,
             "line_direction": line_direction,
             "half_length": float(refine_half_length),
-            "sample_spacing": float(dn),
+            "sample_spacing": float(refined_step),
         },
         "chosen_candidate": chosen_candidate,
     }
@@ -1519,12 +1528,19 @@ def process_case(paths: StudyPaths, case_dir: str):
     dt, dn = configured_sampling_steps()
     debug_export_enabled = env_flag("CFD_EXPORT_TERMINATED_SEARCH_LINES", export_terminated_search_lines)
     debug_export_limit = env_int("CFD_TERMINATED_SEARCH_LINE_LIMIT", terminated_search_line_max_lines)
-    debug_writer = TerminatedSearchLineDebugWriter(case_path, debug_export_enabled, debug_export_limit)
+    debug_export_stride = env_int("CFD_TERMINATED_SEARCH_LINE_STRIDE", terminated_search_line_stride)
+    debug_writer = TerminatedSearchLineDebugWriter(
+        case_path,
+        debug_export_enabled,
+        debug_export_limit,
+        debug_export_stride,
+    )
     if debug_export_enabled:
         limit_label = "all" if debug_export_limit == 0 else str(debug_export_limit)
         progress(
             f"  [debug] terminated search-line export enabled "
-            f"(limit={limit_label}, output={debug_writer.summary_csv_path}, {debug_writer.profiles_csv_path})"
+            f"(limit={limit_label}, stride={debug_writer.line_stride}, "
+            f"output={debug_writer.summary_csv_path}, {debug_writer.profiles_csv_path})"
         )
     # `dt` controls the shell-to-shell spacing; `dn` controls the sample spacing
     # along each probe line.
@@ -1560,7 +1576,8 @@ def process_case(paths: StudyPaths, case_dir: str):
         if debug_writer.line_count > 0:
             progress(
                 f"  [debug] wrote {debug_writer.summary_csv_path} and {debug_writer.profiles_csv_path} "
-                f"({debug_writer.line_count} terminated lines, {debug_writer.sample_count} samples)"
+                f"({debug_writer.line_count}/{debug_writer.observed_line_count} terminated lines sampled, "
+                f"{debug_writer.sample_count} samples, stride={debug_writer.line_stride})"
             )
         else:
             progress("  [debug] no terminated search lines were exported")
@@ -1603,10 +1620,11 @@ def main() -> int:
     )
     if env_flag("CFD_EXPORT_TERMINATED_SEARCH_LINES", export_terminated_search_lines):
         limit = env_int("CFD_TERMINATED_SEARCH_LINE_LIMIT", terminated_search_line_max_lines)
+        stride = max(1, env_int("CFD_TERMINATED_SEARCH_LINE_STRIDE", terminated_search_line_stride))
         limit_label = "all" if limit == 0 else str(limit)
         print(
             f"Terminated search-line debug export: on "
-            f"(limit={limit_label}, files={terminated_search_line_summary_csv_name}, "
+            f"(limit={limit_label}, stride={stride}, files={terminated_search_line_summary_csv_name}, "
             f"{terminated_search_line_profiles_csv_name})"
         )
 
