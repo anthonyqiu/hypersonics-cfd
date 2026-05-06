@@ -72,9 +72,6 @@ default_dn = 0.01
 # Ignore very weak gradients far from the real shock.
 surface_sensor_min_fraction = 0.005
 
-# Reject triangles that stretch too far across local gaps in the sampled surface.
-surface_mesh_edge_factor = 4
-
 # Savitzky-Golay smoothing settings for the 1D shock-sensor profile on each line.
 # We define smoothing in physical distance along the line instead of raw sample count so the
 # behavior stays similar when `dn` changes. This value is intentionally a bit larger than the
@@ -1371,19 +1368,6 @@ def extract_panel_surface(
                 shock_node_index_by_shell_ray.get((shell_index, next_ray)),
             ]
             if any(corner is None for corner in corners):
-                continue
-
-            p0, p1, p2, p3 = [poly.points[int(corner)] for corner in corners]
-            max_edge = max(
-                np.linalg.norm(p0 - p1),
-                np.linalg.norm(p1 - p2),
-                np.linalg.norm(p2 - p3),
-                np.linalg.norm(p3 - p0),
-                np.linalg.norm(p0 - p2),
-                np.linalg.norm(p1 - p3),
-            )
-            # Skip very stretched cells; they usually come from local gaps or missed rays.
-            if max_edge > surface_mesh_edge_factor * max(dt, dn):
                 continue
 
             c0, c1, c2, c3 = [int(corner) for corner in corners]
