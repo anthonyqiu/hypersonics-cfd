@@ -94,7 +94,7 @@ stagnation_refined_step_factor = 0.2
 
 # Panel-guided search-line settings used after the first shell.
 search_line_half_length_factor = 10.0
-panel_prediction_tolerance_dt_factor = 2
+panel_prediction_tolerance_dt_factor = 0.75
 panel_fit_node_count = 5
 minimum_azimuth_rays = 12
 
