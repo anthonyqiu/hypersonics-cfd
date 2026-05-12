@@ -51,6 +51,14 @@ echo "Study:      $study_name"
 
 cd "$root_dir"
 
+thread_count="${SLURM_CPUS_PER_TASK:-1}"
+export OMP_NUM_THREADS="$thread_count"
+export OPENBLAS_NUM_THREADS="$thread_count"
+export MKL_NUM_THREADS="$thread_count"
+export NUMEXPR_NUM_THREADS="$thread_count"
+export VTK_SMP_MAX_THREADS="$thread_count"
+echo "Threads:    $thread_count"
+
 case_count=0
 while IFS= read -r case_path || [[ -n "$case_path" ]]; do
     [[ -z "$case_path" ]] && continue

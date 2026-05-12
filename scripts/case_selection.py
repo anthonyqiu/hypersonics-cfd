@@ -301,7 +301,7 @@ def choose_postprocess_cases_interactively(
     print(f"  {len(menu_items)+1:2}) {label}")
     menu_items.append((label, all_cases))
 
-    label = "Custom case name"
+    label = "Custom case name(s)"
     print(f"  {len(menu_items)+1:2}) {label}")
     menu_items.append(("CUSTOM", []))
 
@@ -320,6 +320,8 @@ def choose_postprocess_cases_interactively(
 
     label, selected_cases = menu_items[index]
     if label == "CUSTOM":
-        custom = input(f"Enter case folder name (e.g. {custom_example}): ").strip()
-        selected_cases = [custom]
+        custom = input(
+            f"Enter case folder name(s), separated by spaces or commas (e.g. {custom_example}): "
+        ).strip()
+        selected_cases = [part for part in re.split(r"[\s,]+", custom) if part]
     return selected_cases

@@ -20,12 +20,14 @@ from layout import choose_study_paths_interactively
 
 FLOW_FILENAME = "flow.vtu"
 SHOCK_OUTPUTS = ("shock_surface.vtp", "shock_surface.csv")
-DEFAULT_MEM = "0"
+DEFAULT_CPUS_PER_TASK = 32
+DEFAULT_MEM = ""
+DEFAULT_TIME_LIMIT = "08:00:00"
 
 
 def load_submit_defaults(study_file: Path) -> tuple[str, str]:
     account = "rrg-jphickey"
-    time_limit = "18:00:00"
+    time_limit = DEFAULT_TIME_LIMIT
     if not study_file.exists():
         return account, time_limit
 
@@ -35,8 +37,8 @@ def load_submit_defaults(study_file: Path) -> tuple[str, str]:
     defaults = dict(matrix.get("defaults", {}))
     if defaults.get("job_account"):
         account = str(defaults["job_account"])
-    if defaults.get("job_time"):
-        time_limit = str(defaults["job_time"])
+    if defaults.get("shock_job_time"):
+        time_limit = str(defaults["shock_job_time"])
     return account, time_limit
 
 
@@ -47,6 +49,9 @@ def has_completed_outputs(case_path: Path) -> bool:
 def build_job_name(case_names: list[str]) -> str:
     if len(case_names) == 1:
         return f"shock_{case_names[0]}"
+    mach_labels = {case_name.split("_", maxsplit=1)[0] for case_name in case_names}
+    if len(mach_labels) == 1:
+        return f"shock_{mach_labels.pop()}_batch_{len(case_names)}"
     return f"shock_batch_{len(case_names)}"
 
 
@@ -75,7 +80,7 @@ def build_sbatch_command(
     account: str,
     python_executable: str,
 ) -> list[str]:
-    return [
+    command = [
         "sbatch",
         "--export=NONE",
         "--get-user-env=L",
@@ -87,8 +92,6 @@ def build_sbatch_command(
         "1",
         "--cpus-per-task",
         str(cpus_per_task),
-        "--mem",
-        str(mem),
         "--time",
         str(time_limit),
         "--account",
@@ -104,6 +107,9 @@ def build_sbatch_command(
         str(extract_script),
         str(manifest_path),
     ]
+    if str(mem).strip():
+        command[command.index("--time"):command.index("--time")] = ["--mem", str(mem)]
+    return command
 
 
 def choose_submit_mode() -> bool:
@@ -124,17 +130,17 @@ def choose_submit_mode() -> bool:
 
 def choose_resource_settings(default_account: str, default_time: str) -> tuple[int, str, str, str, str]:
     print("\nShock extraction resource defaults:")
-    print(f"  cpus-per-task: 1")
-    print(f"  mem:           {DEFAULT_MEM}")
+    print(f"  cpus-per-task: {DEFAULT_CPUS_PER_TASK}")
+    print(f"  mem:           {'not requested'}")
     print(f"  time:          {default_time}")
     print(f"  account:       {default_account}")
     print(f"  python:        {sys.executable}")
 
     if prompt_yes_no("Use these defaults?", default=True):
-        return 1, DEFAULT_MEM, default_time, default_account, sys.executable
+        return DEFAULT_CPUS_PER_TASK, DEFAULT_MEM, default_time, default_account, sys.executable
 
-    cpus_text = prompt_with_default("CPUs per task", "1")
-    mem = prompt_with_default("Memory request", DEFAULT_MEM)
+    cpus_text = prompt_with_default("CPUs per task", str(DEFAULT_CPUS_PER_TASK))
+    mem = prompt_with_default("Memory request (blank = do not request --mem)", DEFAULT_MEM)
     time_limit = prompt_with_default("Walltime", default_time)
     account = prompt_with_default("Account", default_account)
     python_executable = prompt_with_default("Python executable", sys.executable)
@@ -181,7 +187,8 @@ def main() -> int:
     print(f"Extractor: {extract_script}")
     print(f"Python: {python_executable}")
     print(
-        f"Resources: nodes=1, ntasks-per-node=1, cpus-per-task={cpus_per_task}, mem={mem}, "
+        f"Resources: nodes=1, ntasks-per-node=1, cpus-per-task={cpus_per_task}, "
+        f"mem={mem or 'not requested'}, "
         f"time={time_limit}, account={account}"
     )
 

@@ -60,6 +60,8 @@ vtu_name = "flow.vtu"
 density_scalar = "Density"
 output_surface_name = "shock_surface.vtp"
 output_csv_name = "shock_surface.csv"
+surface_flow_name = "surface_flow.vtu"
+body_profile_name = "orion_profile_xy.csv"
 
 # Search radius around the streamwise axis for the very first stagnation shock point.
 stagnation_shock_node_radius = 0.10
@@ -84,19 +86,77 @@ streamwise_padding_factor = 1.0
 
 # Peak-detection thresholds on each 1D line sample.
 line_peak_height_fraction = 0.05
-line_peak_prominence_fraction = 0.02
+# This loose prominence threshold helps `find_peaks` ignore tiny wiggles while finding
+# possible shock candidates.
+line_peak_detection_prominence_fraction = 0.02
+# This stricter final check rejects a selected point if its peak does not stand out from
+# the local baseline. Example: 0.10 means the prominence must be at least 10% of the
+# selected peak height.
+line_peak_acceptance_prominence_ratio = 0.02
+# Very near the nose, some valid broad shock profiles do not form a clean local peak after
+# smoothing. Only enforce the final prominence gate farther out, where weak fallback peaks
+# are more likely to be spray/artifacts than the main attached shock.
+panel_prominence_check_min_radius = 5.0
+# Prominence is useful, but a single weak 1D profile should not punch a hole in an otherwise
+# coherent 2D shock sheet. Keep very short weak-prominence gaps, and reject longer contiguous
+# weak segments as the surface trails into non-shock scatter.
+weak_prominence_gap_fill_max_rays = 2
 
 # Stagnation search refinement:
 # - first scan the long stagnation line with a coarse spacing
 # - then resample a smaller window around that coarse peak using a finer fraction of `dn`
 stagnation_coarse_step_factor = 10.0
 stagnation_refined_step_factor = 0.2
+# When the stagnation line is body-anchored, the body/wall gradient can be stronger than the
+# bow shock. Ignore a tiny region around and behind the body anchor when choosing the first
+# coarse stagnation peak.
+stagnation_body_exclusion_dn_factor = 5.0
 
 # Panel-guided search-line settings used after the first shell.
-search_line_half_length_factor = 10.0
-panel_prediction_tolerance_dt_factor = 0.75
-panel_fit_node_count = 5
+# Keep search lines local to the panel prediction so they cannot reach unrelated gradient
+# branches. The acceptance tolerance below is intentionally smaller than this sampled window.
+search_line_half_length_sampling_diagonal_factor = 2.0
+# `epsilon_tol` is the maximum allowed distance between the panel prediction and the
+# detected shock point on that search line. Use the local sampling diagonal so it scales
+# with both shell spacing (`dt`) and line spacing (`dn`).
+epsilon_tol_sampling_diagonal_factor = 1.25
+# Predict each new panel-guided search line from a local polynomial through recent
+# accepted nodes on the same ray. A quadratic over a longer history has been more stable
+# than a short cubic because it follows the broader shock trend without overreacting to
+# one noisy node.
+panel_fit_node_count = 31
+panel_polynomial_degree = 2
+panel_corrector_min_history_nodes = 3
+# Use streamwise bootstrap lines only until each ray has enough accepted nodes to fit a
+# local panel predictor. This avoids a hardcoded physical transition radius and lets each
+# ray switch independently.
+streamwise_bootstrap_node_count = 5
+# During the first few panel-guided shells, the predictor can still be under-informed,
+# especially in the strongly curved nose region. In that warmup period, use the panel line
+# first, but fall back to the local streamwise line if the panel candidate fails. This keeps
+# the core bow-shock surface complete without reviving far-downstream trailing spray.
+panel_guided_warmup_fallback_node_count = 31
 minimum_azimuth_rays = 12
+# Set to a fraction such as 0.15 to stop before adding shells with too many failed rays.
+# Keep this disabled for asymmetric AoA cases because one side can naturally terminate
+# earlier than the other.
+max_terminated_search_line_fraction = None
+# Early accepted points should vary smoothly from ray to ray. This rejects isolated nodes
+# that jump to a neighboring shock/gradient branch before those bad points can form panels.
+shell_neighbor_check_max_radius = 6.0
+shell_neighbor_window_rays = 2
+shell_neighbor_stream_tolerance_factor = 3.0
+
+# Final surface cleanup:
+# The line-search stage can occasionally leave thin "hairs" near the end of the shock.
+# These points may pass the 1D peak test, but they do not form a supported 2D surface.
+# This post-processing pass is intentionally gentle:
+#   1. keep the main connected surface component
+#   2. iteratively peel only one-neighbor dangling endpoints
+# It does not crop by x/y/z position, Mach number, or case-specific geometry.
+surface_cleanup_enabled = True
+surface_cleanup_small_component_fraction = 0.05
+surface_cleanup_dangling_neighbor_limit = 2
 
 # This is only a runaway-loop guard. Normal extraction should stop because a shell fails
 # or becomes too sparse to form a reliable surface, not because this limit is reached.
@@ -209,27 +269,107 @@ def frame_coordinates(
     streamwise: np.ndarray,
     normal: np.ndarray,
     spanwise: np.ndarray,
+    origin: np.ndarray | None = None,
 ) -> np.ndarray:
     """Project global xyz points into the local (streamwise, normal, spanwise) frame."""
     pts = np.asarray(points, dtype=float)
+    if origin is not None:
+        pts = pts - np.asarray(origin, dtype=float)
     return np.column_stack((pts @ streamwise, pts @ normal, pts @ spanwise))
 
 
-def perpendicular_radius(points: np.ndarray, streamwise: np.ndarray) -> np.ndarray:
+def perpendicular_radius(
+    points: np.ndarray,
+    streamwise: np.ndarray,
+    origin: np.ndarray | None = None,
+) -> np.ndarray:
     """
     Distance from each point to the AoA-aligned streamwise axis.
 
     This is the sideways distance from the tilted centerline, not distance from the body.
     """
     pts = np.asarray(points, dtype=float)
+    if origin is not None:
+        pts = pts - np.asarray(origin, dtype=float)
     axial = np.outer(pts @ streamwise, streamwise)
     return np.linalg.norm(pts - axial, axis=1)
+
+
+def load_body_anchor_points_from_surface_flow(case_path: Path) -> tuple[np.ndarray, str] | None:
+    """
+    Try to read body-surface points from a case-local `surface_flow.vtu`.
+
+    Some existing cases contain an empty `surface_flow.vtu`, so this is only used when the
+    file has real geometry points. Otherwise we fall back to the canonical Orion profile.
+    """
+    surface_path = case_path / surface_flow_name
+    if not surface_path.exists():
+        return None
+
+    with vtk_warning_mode(suppress_vtk_warnings):
+        surface = pv.read(surface_path)
+    if surface.n_points == 0:
+        return None
+    return np.asarray(surface.points, dtype=float), surface_path.name
+
+
+def load_body_anchor_points_from_profile(study_root: Path) -> tuple[np.ndarray, str] | None:
+    """
+    Read the 2D Orion body profile and place it in the extractor's 3D coordinate system.
+
+    The profile columns are `(x, y)` in the AoA plane. The solver/extractor coordinates use
+    global `y` as the spanwise direction, so profile `y` becomes global `z` here.
+    """
+    profile_path = Path(study_root) / "geometry" / body_profile_name
+    if not profile_path.exists():
+        return None
+
+    points: list[list[float]] = []
+    with profile_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            if "x" not in row or "y" not in row:
+                continue
+            points.append([float(row["x"]), 0.0, float(row["y"])])
+
+    if not points:
+        return None
+    return np.asarray(points, dtype=float), f"geometry/{profile_path.name}"
+
+
+def choose_body_stagnation_anchor(
+    study_root: Path,
+    case_path: Path,
+    streamwise: np.ndarray,
+) -> tuple[np.ndarray, str]:
+    """
+    Choose the upstream-most body point for the current AoA.
+
+    This point defines the streamwise axis used by the stagnation search and shell marching.
+    Without this anchor, high-AoA cases can accidentally start from a generic axis that does
+    not pass through the body stagnation region.
+    """
+    body_sources = (
+        load_body_anchor_points_from_surface_flow(case_path),
+        load_body_anchor_points_from_profile(study_root),
+    )
+    for source in body_sources:
+        if source is None:
+            continue
+        points, source_label = source
+        stream_coordinates = points @ np.asarray(streamwise, dtype=float)
+        anchor = np.asarray(points[int(np.argmin(stream_coordinates))], dtype=float)
+        return anchor, source_label
+
+    progress("  [warn] no body geometry anchor found; falling back to the global origin")
+    return np.zeros(3, dtype=float), "global origin fallback"
 
 
 def choose_stagnation_shock_node(
     points: np.ndarray,
     shock_sensor: np.ndarray,
     streamwise: np.ndarray,
+    axis_origin: np.ndarray | None = None,
 ) -> tuple[int, float]:
     """
     Pick the first trusted shock point near the stagnation region.
@@ -238,7 +378,7 @@ def choose_stagnation_shock_node(
     easiest to identify there. If that narrow tube contains no points, we fall back to the
     points closest to the axis.
     """
-    radius = perpendicular_radius(points, streamwise)
+    radius = perpendicular_radius(points, streamwise, origin=axis_origin)
     center_mask = radius <= stagnation_shock_node_radius
     center_indices = np.flatnonzero(center_mask)
     if center_indices.size == 0:
@@ -326,6 +466,8 @@ class TerminatedSearchLineDebugWriter:
         "candidate_index",
         "candidate_n",
         "candidate_smoothed",
+        "candidate_prominence",
+        "candidate_prominence_ratio",
         "line_center_x",
         "line_center_y",
         "line_center_z",
@@ -359,6 +501,8 @@ class TerminatedSearchLineDebugWriter:
         "candidate_index",
         "candidate_n",
         "candidate_smoothed",
+        "candidate_prominence",
+        "candidate_prominence_ratio",
         "n",
         "x",
         "y",
@@ -497,6 +641,12 @@ class TerminatedSearchLineDebugWriter:
         candidate_smoothed = (
             float(candidate["shock_sensor_smoothed"]) if candidate is not None else float("nan")
         )
+        candidate_prominence = (
+            float(candidate["shock_sensor_prominence"]) if candidate is not None else float("nan")
+        )
+        candidate_prominence_ratio = (
+            float(candidate["shock_sensor_prominence_ratio"]) if candidate is not None else float("nan")
+        )
         is_candidate = np.zeros(n_coordinates.size, dtype=int)
         if 0 <= candidate_index < is_candidate.size:
             is_candidate[candidate_index] = 1
@@ -530,6 +680,8 @@ class TerminatedSearchLineDebugWriter:
             "candidate_index": candidate_index,
             "candidate_n": candidate_n,
             "candidate_smoothed": candidate_smoothed,
+            "candidate_prominence": candidate_prominence,
+            "candidate_prominence_ratio": candidate_prominence_ratio,
         }
 
         summary_writer.writerow(
@@ -578,6 +730,7 @@ def build_streamwise_window(
     normal: np.ndarray,
     spanwise: np.ndarray,
     dn: float,
+    axis_origin: np.ndarray,
 ) -> tuple[float, float]:
     """
     Build the baseline streamwise search window.
@@ -586,14 +739,16 @@ def build_streamwise_window(
     This function decides how long those lines should be so they cover the active shock region
     plus a little extra margin.
     """
-    local_points = frame_coordinates(active_points, streamwise, normal, spanwise)
+    local_points = frame_coordinates(active_points, streamwise, normal, spanwise, origin=axis_origin)
     stream_min = float(local_points[:, 0].min())
     stream_max = float(local_points[:, 0].max())
     stream_pad = max((stream_max - stream_min) * streamwise_padding_factor, dn)
     start = stream_min - stream_pad
     stop = stream_max + stream_pad
-    center = 0.5 * (start + stop)
-    half_length = max(0.5 * (stop - start), dn)
+    # The line center deliberately stays at the body anchor (stream coordinate 0). The
+    # half-length grows enough to cover the active shock region on both sides of that anchor.
+    center = 0.0
+    half_length = max(abs(start), abs(stop), dn)
     return center, half_length
 
 
@@ -659,7 +814,7 @@ def sample_line(
 
 def build_stagnation_search_diagnostics(
     gradient_mesh: pv.DataSet,
-    stream_center: float,
+    line_center: np.ndarray,
     stream_half_length: float,
     streamwise: np.ndarray,
     dn: float,
@@ -673,7 +828,7 @@ def build_stagnation_search_diagnostics(
     coarse_step = max(dn, stagnation_coarse_step_factor * dn)
     refined_step = max(dn * stagnation_refined_step_factor, np.finfo(float).eps)
     line_direction = np.asarray(streamwise, dtype=float)
-    coarse_center = np.asarray(stream_center, dtype=float) * line_direction
+    coarse_center = np.asarray(line_center, dtype=float)
 
     progress(
         f"  [stage] sampling stagnation node line (coarse pass, step={coarse_step:.4f}, "
@@ -686,17 +841,24 @@ def build_stagnation_search_diagnostics(
         stream_half_length,
         coarse_step,
     )
-    coarse_candidate = find_shock_node_on_line(
+    body_exclusion = max(stagnation_body_exclusion_dn_factor * dn, 2.0 * dn)
+    coarse_candidate, _, _ = find_shock_node_on_line_result(
         coarse_sample,
         min_height=0.0,
         selection_mode=PEAK_MODE_FIRST_UPSTREAM,
         fallback_global=True,
+        enforce_prominence_check=False,
+        max_line_coordinate=-body_exclusion,
     )
     if coarse_candidate is None:
         raise ValueError("could not find a shock node on the coarse stagnation node line")
 
     refine_half_length = min(stream_half_length, coarse_step)
     refine_center = np.asarray(coarse_candidate["point"], dtype=float)
+    # In the refined line coordinate system, the body anchor is downstream of the coarse
+    # shock candidate by `-coarse_candidate["line_coordinate"]`. Exclude that wall region
+    # again so the refined pass cannot snap back to the body gradient.
+    refined_body_coordinate = -float(coarse_candidate["line_coordinate"])
     progress(
         f"  [stage] refining stagnation node line around coarse peak "
         f"(half_length={refine_half_length:.4f}, step={refined_step:.4f})"
@@ -708,11 +870,13 @@ def build_stagnation_search_diagnostics(
         refine_half_length,
         refined_step,
     )
-    refined_candidate = find_shock_node_on_line(
+    refined_candidate, _, _ = find_shock_node_on_line_result(
         refined_sample,
         min_height=0.0,
         selection_mode=PEAK_MODE_FIRST_UPSTREAM,
         fallback_global=True,
+        enforce_prominence_check=False,
+        max_line_coordinate=refined_body_coordinate - body_exclusion,
     )
     chosen_candidate = refined_candidate if refined_candidate is not None else coarse_candidate
     return {
@@ -738,7 +902,7 @@ def build_stagnation_search_diagnostics(
 
 def find_stagnation_candidate(
     gradient_mesh: pv.DataSet,
-    stream_center: float,
+    line_center: np.ndarray,
     stream_half_length: float,
     streamwise: np.ndarray,
     dn: float,
@@ -746,12 +910,79 @@ def find_stagnation_candidate(
     """Return the final stagnation candidate from the coarse-to-fine search."""
     diagnostics = build_stagnation_search_diagnostics(
         gradient_mesh,
-        stream_center,
+        line_center,
         stream_half_length,
         streamwise,
         dn,
     )
     return diagnostics["chosen_candidate"]  # type: ignore[return-value]
+
+
+def fallback_stagnation_candidate_from_reference_csv(
+    case_path: Path,
+    gradient_mesh: pv.DataSet,
+    streamwise: np.ndarray,
+    normal: np.ndarray,
+) -> dict[str, float | int | np.ndarray]:
+    """
+    Pick a stagnation seed from an existing 2D shock curve if line interpolation fails.
+
+    This is intentionally safer than choosing the maximum mesh gradient near the centerline:
+    for high-Mach cases that maximum can be a wall/body gradient, not the bow shock.
+    """
+    reference_paths = [
+        case_path / "shock_gradient.csv",
+        case_path / "shock.csv",
+        case_path / "shock_pressure.csv",
+    ]
+    reference_row: dict[str, str] | None = None
+    reference_path: Path | None = None
+    for path in reference_paths:
+        if not path.exists():
+            continue
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        if not rows:
+            continue
+        reference_row = min(rows, key=lambda row: abs(float(row["y"])))
+        reference_path = path
+        break
+
+    if reference_row is None or reference_path is None:
+        raise ValueError("stagnation line search failed and no shock reference CSV was available")
+
+    stream_coord = float(reference_row["x"])
+    normal_coord = float(reference_row["y"])
+    seed_point = stream_coord * np.asarray(streamwise, dtype=float) + normal_coord * np.asarray(normal, dtype=float)
+    sampled = pv.PolyData(np.asarray([seed_point], dtype=float)).sample(gradient_mesh)
+    if "vtkValidPointMask" in sampled.array_names:
+        valid = bool(np.asarray(sampled["vtkValidPointMask"], dtype=int)[0])
+    else:
+        valid = True
+    density_values = np.asarray(sampled[density_scalar], dtype=float) if valid else np.asarray([0.0])
+    sensor_values = np.asarray(sampled["ShockSensorRaw"], dtype=float) if valid else np.asarray([0.0])
+    density = float(np.nan_to_num(density_values[0], nan=0.0, posinf=0.0, neginf=0.0))
+    shock_sensor = float(np.nan_to_num(sensor_values[0], nan=0.0, posinf=0.0, neginf=0.0))
+    if shock_sensor <= 0.0:
+        closest_idx = int(gradient_mesh.find_closest_point(seed_point))
+        density = float(np.asarray(gradient_mesh[density_scalar], dtype=float)[closest_idx])
+        shock_sensor = float(np.asarray(gradient_mesh["ShockSensorRaw"], dtype=float)[closest_idx])
+        seed_point = np.asarray(gradient_mesh.points[closest_idx], dtype=float)
+
+    progress(
+        f"  [warn] using {reference_path.name} centerline seed "
+        f"(x={stream_coord:.4f}, y={normal_coord:.4f}, sensor={shock_sensor:.3g})"
+    )
+    return {
+        "point": seed_point,
+        "density": density,
+        "shock_sensor_raw": shock_sensor,
+        "shock_sensor_smoothed": shock_sensor,
+        "shock_sensor_prominence": shock_sensor,
+        "shock_sensor_prominence_ratio": 1.0,
+        "sample_index": -1,
+        "line_coordinate": 0.0,
+    }
 
 
 def autoscaled_savgol_window_points(sample_spacing: float, segment_size: int) -> int:
@@ -822,12 +1053,19 @@ def smooth_line_profile(
     return smoothed
 
 
-def find_shock_node_on_line(
+def find_shock_node_on_line_result(
     line_sample: dict[str, np.ndarray],
     min_height: float,
     selection_mode: str,
     fallback_global: bool,
-) -> dict[str, float | int | np.ndarray] | None:
+    enforce_prominence_check: bool = True,
+    min_line_coordinate: float | None = None,
+    max_line_coordinate: float | None = None,
+) -> tuple[
+    dict[str, float | int | np.ndarray] | None,
+    str,
+    dict[str, float | int | np.ndarray] | None,
+]:
     """
     Find one shock node on a 1D node-line sample.
 
@@ -836,48 +1074,86 @@ def find_shock_node_on_line(
     - `first_upstream`: used for stagnation and shell 1 streamwise lines
     - `nearest_center`: used for panel-guided lines centered near a predicted shock location
     """
-    valid_idx = np.flatnonzero(line_sample["valid_mask"])
+    line_coordinates = np.asarray(line_sample["line_coordinates"], dtype=float)
+    search_mask = np.asarray(line_sample["valid_mask"], dtype=bool).copy()
+    if min_line_coordinate is not None:
+        search_mask &= line_coordinates >= float(min_line_coordinate)
+    if max_line_coordinate is not None:
+        search_mask &= line_coordinates <= float(max_line_coordinate)
+
+    valid_idx = np.flatnonzero(search_mask)
     if valid_idx.size == 0:
-        return None
+        return None, "no_valid_samples", None
 
     smoothed = smooth_line_profile(
         line_sample["shock_sensor_raw"],
-        line_sample["valid_mask"],
-        line_sample["line_coordinates"],
+        search_mask,
+        line_coordinates,
     )
     start = int(valid_idx[0])
     stop = int(valid_idx[-1]) + 1
     segment = smoothed[start:stop]
     local_max = float(np.max(segment))
     height_threshold = max(float(min_height), local_max * line_peak_height_fraction)
-    prominence_threshold = local_max * line_peak_prominence_fraction
+    prominence_threshold = local_max * line_peak_detection_prominence_fraction
 
     # `find_peaks` returns all acceptable local maxima. We then apply a second rule
     # to choose which peak is the physical shock for this particular line.
-    peaks, _ = find_peaks(segment, height=height_threshold, prominence=prominence_threshold)
+    peaks, peak_properties = find_peaks(segment, height=height_threshold, prominence=prominence_threshold)
     candidate_indices = [start + int(idx) for idx in peaks]
+    prominence_by_index = {
+        start + int(idx): float(peak_properties["prominences"][peak_offset])
+        for peak_offset, idx in enumerate(peaks)
+    }
     if candidate_indices:
         if selection_mode == PEAK_MODE_FIRST_UPSTREAM:
             peak_idx = int(candidate_indices[0])
         elif selection_mode == PEAK_MODE_NEAREST_CENTER:
-            peak_idx = min(candidate_indices, key=lambda idx: abs(float(line_sample["line_coordinates"][idx])))
+            peak_idx = min(candidate_indices, key=lambda idx: abs(float(line_coordinates[idx])))
         else:
             raise ValueError(f"unknown peak selection mode: {selection_mode}")
     elif fallback_global:
         peak_idx = int(start + np.argmax(segment))
         if smoothed[peak_idx] <= 0.0:
-            return None
+            return None, "nonpositive_global_peak", None
     else:
-        return None
+        return None, "no_detected_peak", None
 
-    return {
+    peak_height = float(smoothed[peak_idx])
+    # A fallback global maximum is intentionally assigned zero prominence. That prevents
+    # a flat, weak profile from being accepted just because it has some largest sample.
+    peak_prominence = float(prominence_by_index.get(peak_idx, 0.0))
+    peak_prominence_ratio = peak_prominence / max(abs(peak_height), np.finfo(float).eps)
+    candidate = {
         "point": line_sample["points"][peak_idx],
         "density": float(line_sample["density"][peak_idx]),
         "shock_sensor_raw": float(line_sample["shock_sensor_raw"][peak_idx]),
-        "shock_sensor_smoothed": float(smoothed[peak_idx]),
+        "shock_sensor_smoothed": peak_height,
+        "shock_sensor_prominence": peak_prominence,
+        "shock_sensor_prominence_ratio": peak_prominence_ratio,
         "sample_index": peak_idx,
-        "line_coordinate": float(line_sample["line_coordinates"][peak_idx]),
+        "line_coordinate": float(line_coordinates[peak_idx]),
     }
+    if enforce_prominence_check and peak_prominence_ratio < line_peak_acceptance_prominence_ratio:
+        return None, "peak_prominence_rejected", candidate
+    return candidate, "", None
+
+
+def find_shock_node_on_line(
+    line_sample: dict[str, np.ndarray],
+    min_height: float,
+    selection_mode: str,
+    fallback_global: bool,
+) -> dict[str, float | int | np.ndarray] | None:
+    """Compatibility wrapper for callers that only need an accepted shock node."""
+    candidate, _, _ = find_shock_node_on_line_result(
+        line_sample,
+        min_height=min_height,
+        selection_mode=selection_mode,
+        fallback_global=fallback_global,
+        enforce_prominence_check=True,
+    )
+    return candidate
 
 
 # --- Panel fitting and predictor/corrector marching ---------------------------
@@ -890,17 +1166,290 @@ def panel_history_for_ray(
     return [stagnation_row] + list(ray_history.get(ray_index, []))
 
 
+def reject_shell_neighbor_outliers(
+    shell_rows: list[dict[str, float | int]],
+    ray_count: int,
+    stream_tolerance: float,
+) -> tuple[list[dict[str, float | int]], list[dict[str, float | int]]]:
+    """
+    Remove isolated shell nodes that disagree strongly with nearby rays.
+
+    A line search can occasionally pick a strong but wrong downstream peak. The panel builder
+    should not have to decide whether that point is physical, so this point-checker compares
+    each node against the local median streamwise position of nearby rays on the same shell.
+    """
+    if len(shell_rows) < 2 * shell_neighbor_window_rays + 2:
+        return shell_rows, []
+
+    row_by_ray = {int(row["ray_index"]): row for row in shell_rows}
+    kept_rows: list[dict[str, float | int]] = []
+    dropped_rows: list[dict[str, float | int]] = []
+
+    for row in shell_rows:
+        ray_index = int(row["ray_index"])
+        neighbor_streams: list[float] = []
+        for offset in range(-shell_neighbor_window_rays, shell_neighbor_window_rays + 1):
+            if offset == 0:
+                continue
+            neighbor = row_by_ray.get((ray_index + offset) % ray_count)
+            if neighbor is not None:
+                neighbor_streams.append(float(neighbor["stream_coord"]))
+
+        if len(neighbor_streams) < max(2, shell_neighbor_window_rays):
+            kept_rows.append(row)
+            continue
+
+        local_stream_median = float(np.median(neighbor_streams))
+        stream_jump = abs(float(row["stream_coord"]) - local_stream_median)
+        if stream_jump > stream_tolerance:
+            dropped_rows.append(row)
+        else:
+            kept_rows.append(row)
+
+    return kept_rows, dropped_rows
+
+
+def contiguous_cyclic_segments(indices: set[int], count: int) -> list[list[int]]:
+    """Group integer indices into contiguous segments on a periodic ring."""
+    if not indices:
+        return []
+    if len(indices) >= count:
+        return [list(range(count))]
+
+    # Start immediately after a gap so wrapped segments are represented as one segment.
+    start = next(i for i in range(count) if i not in indices)
+    segments: list[list[int]] = []
+    current: list[int] = []
+    for step in range(1, count + 1):
+        idx = (start + step) % count
+        if idx in indices:
+            current.append(idx)
+        elif current:
+            segments.append(current)
+            current = []
+    if current:
+        segments.append(current)
+    return segments
+
+
+def reject_unsupported_weak_prominence_rows(
+    shell_rows: list[dict[str, float | int]],
+    ray_count: int,
+) -> tuple[list[dict[str, float | int]], list[dict[str, float | int]], int]:
+    """
+    Reject broad weak-prominence segments, but keep tiny gaps inside the main surface.
+
+    A single search line can have a weak peak because of sampling/smoothing details even when
+    neighboring rays clearly remain on the same shock sheet. Long contiguous weak runs are
+    different: those are where the shock signature is dying out, so they should terminate.
+    """
+    weak_rays = {
+        int(row["ray_index"])
+        for row in shell_rows
+        if int(row.get("prominence_ok", 1)) == 0
+    }
+    if not weak_rays:
+        return shell_rows, [], 0
+
+    rejected_rays: set[int] = set()
+    kept_weak_count = 0
+    for segment in contiguous_cyclic_segments(weak_rays, ray_count):
+        if len(segment) <= weak_prominence_gap_fill_max_rays:
+            kept_weak_count += len(segment)
+        else:
+            rejected_rays.update(segment)
+
+    rejected_rows = [row for row in shell_rows if int(row["ray_index"]) in rejected_rays]
+    kept_rows = [row for row in shell_rows if int(row["ray_index"]) not in rejected_rays]
+    return kept_rows, rejected_rows, kept_weak_count
+
+
+def count_line_modes(shell_rows: list[dict[str, float | int]]) -> tuple[int, int]:
+    """Count streamwise and panel-guided accepted rows after shell-level filtering."""
+    streamwise_count = sum(1 for row in shell_rows if int(row["line_mode"]) == LINE_MODE_STREAMWISE)
+    panel_count = sum(1 for row in shell_rows if int(row["line_mode"]) == LINE_MODE_PANEL_GUIDED)
+    return streamwise_count, panel_count
+
+
+def surface_node_key(row: dict[str, float | int]) -> tuple[int, int]:
+    """Return the structured-grid address of one accepted shock node."""
+    return int(row["shell_layer"]), int(row["ray_index"])
+
+
+def build_surface_neighbor_graph(
+    node_keys: set[tuple[int, int]],
+    ray_count: int,
+) -> dict[tuple[int, int], set[tuple[int, int]]]:
+    """
+    Connect accepted nodes that should be neighbors on the sampled shock surface.
+
+    A node is addressed by `(shell_layer, ray_index)`. The natural neighbors are:
+    - previous/next ray on the same shell
+    - previous/next shell on the same ray
+    - the stagnation node connected to shell 1
+
+    We intentionally avoid diagonal neighbors here. Diagonal connections can make a
+    one-cell-wide hair look more supported than it really is.
+    """
+    graph = {key: set() for key in node_keys}
+    center_key = (0, 0)
+
+    def connect(a: tuple[int, int], b: tuple[int, int]) -> None:
+        if a in graph and b in graph:
+            graph[a].add(b)
+            graph[b].add(a)
+
+    if center_key in graph:
+        for ray_index in range(ray_count):
+            connect(center_key, (1, ray_index))
+
+    for shell_layer, ray_index in node_keys:
+        if shell_layer == 0:
+            continue
+
+        connect((shell_layer, ray_index), (shell_layer, (ray_index - 1) % ray_count))
+        connect((shell_layer, ray_index), (shell_layer, (ray_index + 1) % ray_count))
+        if shell_layer > 1:
+            connect((shell_layer, ray_index), (shell_layer - 1, ray_index))
+        connect((shell_layer, ray_index), (shell_layer + 1, ray_index))
+
+    return graph
+
+
+def connected_components(
+    graph: dict[tuple[int, int], set[tuple[int, int]]],
+) -> list[set[tuple[int, int]]]:
+    """Find connected groups in the accepted-node graph."""
+    components: list[set[tuple[int, int]]] = []
+    unseen = set(graph)
+
+    while unseen:
+        start = unseen.pop()
+        component = {start}
+        stack = [start]
+        while stack:
+            current = stack.pop()
+            for neighbor in graph[current]:
+                if neighbor not in unseen:
+                    continue
+                unseen.remove(neighbor)
+                component.add(neighbor)
+                stack.append(neighbor)
+        components.append(component)
+
+    return components
+
+
+def keep_large_surface_components(
+    node_keys: set[tuple[int, int]],
+    ray_count: int,
+) -> tuple[set[tuple[int, int]], int]:
+    """
+    Keep the dominant connected surface and remove tiny disconnected islands.
+
+    The largest component is always kept. Additional components are kept only if they are
+    at least `surface_cleanup_small_component_fraction` as large as the largest component.
+    """
+    if not node_keys:
+        return node_keys, 0
+
+    graph = build_surface_neighbor_graph(node_keys, ray_count)
+    components = connected_components(graph)
+    if len(components) <= 1:
+        return node_keys, 0
+
+    largest_size = max(len(component) for component in components)
+    minimum_size = max(1, int(math.ceil(surface_cleanup_small_component_fraction * largest_size)))
+    kept_components = [component for component in components if len(component) >= minimum_size]
+    kept_keys = set().union(*kept_components)
+    return kept_keys, len(node_keys) - len(kept_keys)
+
+
+def remove_dangling_surface_endpoints(
+    node_keys: set[tuple[int, int]],
+    ray_count: int,
+) -> tuple[set[tuple[int, int]], int, int]:
+    """
+    Iteratively peel one-neighbor endpoint nodes from the accepted surface graph.
+
+    This removes hair-like strands without requiring every valid boundary node to have a
+    large number of neighbors. The stagnation node is protected because it is the apex of
+    the surface fan.
+    """
+    kept_keys = set(node_keys)
+    removed_count = 0
+    iteration_count = 0
+
+    while True:
+        graph = build_surface_neighbor_graph(kept_keys, ray_count)
+        dangling_keys = {
+            key
+            for key, neighbors in graph.items()
+            if key != (0, 0) and len(neighbors) <= surface_cleanup_dangling_neighbor_limit
+        }
+        if not dangling_keys:
+            break
+
+        kept_keys.difference_update(dangling_keys)
+        removed_count += len(dangling_keys)
+        iteration_count += 1
+
+    return kept_keys, removed_count, iteration_count
+
+
+def cleanup_accepted_surface_nodes(
+    accepted_rows: list[dict[str, float | int]],
+    ray_count: int,
+) -> tuple[list[dict[str, float | int]], dict[str, int]]:
+    """
+    Remove obvious non-surface stragglers after the marching stage.
+
+    This cleanup is deliberately topology-based rather than case-geometry-based. It asks:
+    "Do these accepted nodes form one supported 2D sheet, or are some nodes disconnected
+    islands / dangling one-neighbor hairs?"
+    """
+    summary = {
+        "before_count": len(accepted_rows),
+        "small_component_removed": 0,
+        "dangling_removed": 0,
+        "dangling_iterations": 0,
+        "final_component_removed": 0,
+        "after_count": len(accepted_rows),
+    }
+    if not surface_cleanup_enabled or len(accepted_rows) <= 1:
+        return accepted_rows, summary
+
+    row_by_key = {surface_node_key(row): row for row in accepted_rows}
+    kept_keys = set(row_by_key)
+
+    kept_keys, removed = keep_large_surface_components(kept_keys, ray_count)
+    summary["small_component_removed"] = removed
+
+    kept_keys, removed, iterations = remove_dangling_surface_endpoints(kept_keys, ray_count)
+    summary["dangling_removed"] = removed
+    summary["dangling_iterations"] = iterations
+
+    # Endpoint pruning can split off a new small island. Do one final component pass so
+    # the written surface remains a coherent sheet.
+    kept_keys, removed = keep_large_surface_components(kept_keys, ray_count)
+    summary["final_component_removed"] = removed
+
+    cleaned_rows = [row for row in accepted_rows if surface_node_key(row) in kept_keys]
+    summary["after_count"] = len(cleaned_rows)
+    return cleaned_rows, summary
+
+
 def fit_panel_model(
     history_rows: list[dict[str, float | int]],
     target_radius: float,
 ) -> dict[str, float] | None:
     """
-    Fit a simple local panel model in (radius_surface, stream_coord) space.
+    Predict the next local panel state in (radius_surface, stream_coord) space.
 
-    The fit is intentionally lightweight: a straight line through the last few accepted points
-    on one ray. From that line we get:
-    - the predicted streamwise location at the next shell radius
-    - the normal direction of the line in the local (stream, radial) plane
+    The shock curve on one ray can be viewed as `x(r)`, where `x` is streamwise position
+    and `r` is distance from the streamwise axis. We fit a local polynomial through the
+    most recent accepted nodes, then evaluate that polynomial at `target_radius`. This is
+    a smoother predictor than using only the last straight segment.
     """
     if len(history_rows) < 2:
         return None
@@ -910,14 +1459,37 @@ def fit_panel_model(
     rows = history_rows[-panel_fit_node_count:]
     radii = np.asarray([float(row["radius_surface"]) for row in rows], dtype=float)
     stream_coords = np.asarray([float(row["stream_coord"]) for row in rows], dtype=float)
+    sort_idx = np.argsort(radii)
+    radii = radii[sort_idx]
+    stream_coords = stream_coords[sort_idx]
 
     unique_radii = np.unique(radii)
     if unique_radii.size < 2:
         return None
 
-    # We fit streamwise position as a function of surface radius on this ray.
-    slope, intercept = np.polyfit(radii, stream_coords, deg=1)
-    predicted_stream = float(slope * target_radius + intercept)
+    # Repeated radii should not normally occur, but keep the latest point if they do.
+    if unique_radii.size != radii.size:
+        unique_stream_coords = []
+        for radius in unique_radii:
+            unique_stream_coords.append(float(stream_coords[np.flatnonzero(radii == radius)[-1]]))
+        radii = unique_radii
+        stream_coords = np.asarray(unique_stream_coords, dtype=float)
+
+    # Shift the radius origin to the last accepted shell before fitting. The polynomial
+    # gives us a smooth local curve shape, but the actual last shock node anchors the
+    # prediction so the fitted curve cannot jump away from accepted data at handoff.
+    last_radius = float(radii[-1])
+    last_stream = float(stream_coords[-1])
+    fit_degree = min(int(panel_polynomial_degree), radii.size - 1)
+    local_radii = radii - last_radius
+    fit_coefficients = np.polyfit(local_radii, stream_coords, deg=fit_degree)
+    slope_coefficients = np.polyder(fit_coefficients)
+
+    target_local_radius = float(target_radius) - last_radius
+    fit_at_last_radius = float(np.polyval(fit_coefficients, 0.0))
+    fit_at_target_radius = float(np.polyval(fit_coefficients, target_local_radius))
+    predicted_stream = last_stream + (fit_at_target_radius - fit_at_last_radius)
+    slope = float(np.polyval(slope_coefficients, target_local_radius))
     # In the local (x, r) view, the panel tangent is [slope, 1]. A perpendicular vector
     # becomes the search-line direction used to probe across the shock.
     normal_xr = np.asarray([1.0, -float(slope)], dtype=float)
@@ -934,6 +1506,7 @@ def build_panel_line(
     panel_model: dict[str, float],
     theta: float,
     target_radius: float,
+    axis_origin: np.ndarray,
     streamwise: np.ndarray,
     normal: np.ndarray,
     spanwise: np.ndarray,
@@ -941,7 +1514,8 @@ def build_panel_line(
     """Convert the 2D panel prediction back into a real 3D node line."""
     radial_unit = radial_unit_vector(theta, normal, spanwise)
     line_center = (
-        float(panel_model["predicted_stream"]) * np.asarray(streamwise, dtype=float)
+        np.asarray(axis_origin, dtype=float)
+        + float(panel_model["predicted_stream"]) * np.asarray(streamwise, dtype=float)
         + float(target_radius) * radial_unit
     )
     line_direction = (
@@ -957,6 +1531,7 @@ def predictor_corrector_candidate(
     history_rows: list[dict[str, float | int]],
     target_radius: float,
     theta: float,
+    axis_origin: np.ndarray,
     streamwise: np.ndarray,
     normal: np.ndarray,
     spanwise: np.ndarray,
@@ -968,7 +1543,7 @@ def predictor_corrector_candidate(
     debug_writer: TerminatedSearchLineDebugWriter | None,
     shell_index: int,
     ray_index: int,
-) -> tuple[dict[str, float | int | np.ndarray] | None, float]:
+) -> tuple[dict[str, float | int | np.ndarray] | None, float, str]:
     """
     Do one panel-based predictor/corrector pass for a single shell-ray location.
 
@@ -984,22 +1559,25 @@ def predictor_corrector_candidate(
     """
     panel_model = fit_panel_model(history_rows, target_radius)
     if panel_model is None:
-        return None, 0.0
+        return None, 0.0, "no_panel_history"
 
     initial_center, initial_direction = build_panel_line(
-        panel_model, theta, target_radius, streamwise, normal, spanwise
+        panel_model, theta, target_radius, axis_origin, streamwise, normal, spanwise
     )
     initial_sample = sample_line(gradient_mesh, initial_center, initial_direction, half_length, normal_step)
-    initial_candidate = find_shock_node_on_line(
+    initial_candidate, initial_rejection_reason, initial_rejected_candidate = find_shock_node_on_line_result(
         initial_sample,
         min_height=min_height,
         selection_mode=PEAK_MODE_NEAREST_CENTER,
         fallback_global=True,
+        enforce_prominence_check=False,
+        min_line_coordinate=-prediction_tolerance,
+        max_line_coordinate=prediction_tolerance,
     )
     if initial_candidate is None:
         if debug_writer is not None:
             debug_writer.write_search_line(
-                reason="panel_initial_no_candidate",
+                reason=f"panel_initial_{initial_rejection_reason or 'no_candidate'}",
                 stage="panel_initial",
                 line_sample=initial_sample,
                 line_center=initial_center,
@@ -1012,34 +1590,67 @@ def predictor_corrector_candidate(
                 azimuth_radians=theta,
                 target_radius=target_radius,
                 line_mode=LINE_MODE_PANEL_GUIDED,
+                candidate=initial_rejected_candidate,
                 prediction_tolerance=prediction_tolerance,
             )
-        return None, 0.0
+        return None, 0.0, initial_rejection_reason or "no_candidate"
+
+    initial_prediction_error = abs(float(initial_candidate["line_coordinate"]))
+    if initial_prediction_error > prediction_tolerance:
+        if debug_writer is not None:
+            debug_writer.write_search_line(
+                reason="panel_initial_prediction_tolerance_rejected",
+                stage="panel_initial",
+                line_sample=initial_sample,
+                line_center=initial_center,
+                line_direction=initial_direction,
+                half_length=half_length,
+                dt=dt,
+                dn=normal_step,
+                shell_layer=shell_index,
+                ray_index=ray_index,
+                azimuth_radians=theta,
+                target_radius=target_radius,
+                line_mode=LINE_MODE_PANEL_GUIDED,
+                candidate=initial_candidate,
+                prediction_error=initial_prediction_error,
+                prediction_tolerance=prediction_tolerance,
+            )
+        return None, initial_prediction_error, "panel_initial_prediction_tolerance_rejected"
+
+    history_radius_count = np.unique(
+        np.asarray([float(row["radius_surface"]) for row in history_rows], dtype=float)
+    ).size
+    if history_radius_count < panel_corrector_min_history_nodes:
+        return initial_candidate, initial_prediction_error, ""
 
     provisional_point = np.asarray(initial_candidate["point"], dtype=float)
     # The provisional row is the first guess. We temporarily pretend it is correct, refit
     # the local panel once, and then resample on that corrected line.
     provisional_row = {
-        "stream_coord": float(np.dot(provisional_point, streamwise)),
+        "stream_coord": float(np.dot(provisional_point - np.asarray(axis_origin, dtype=float), streamwise)),
         "radius_surface": float(target_radius),
     }
     corrected_model = fit_panel_model(history_rows + [provisional_row], target_radius)
     if corrected_model is None:
-        return initial_candidate, abs(float(initial_candidate["line_coordinate"]))
+        return initial_candidate, abs(float(initial_candidate["line_coordinate"])), ""
 
     corrected_center, corrected_direction = build_panel_line(
-        corrected_model, theta, target_radius, streamwise, normal, spanwise
+        corrected_model, theta, target_radius, axis_origin, streamwise, normal, spanwise
     )
     corrected_sample = sample_line(gradient_mesh, corrected_center, corrected_direction, half_length, normal_step)
-    corrected_candidate = find_shock_node_on_line(
+    corrected_candidate, _, _ = find_shock_node_on_line_result(
         corrected_sample,
         min_height=min_height,
         selection_mode=PEAK_MODE_NEAREST_CENTER,
         fallback_global=True,
+        enforce_prominence_check=False,
+        min_line_coordinate=-prediction_tolerance,
+        max_line_coordinate=prediction_tolerance,
     )
     if corrected_candidate is None:
-        prediction_error = abs(float(initial_candidate["line_coordinate"]))
-        if prediction_error > prediction_tolerance and debug_writer is not None:
+        prediction_error = initial_prediction_error
+        if debug_writer is not None:
             debug_writer.write_search_line(
                 reason="panel_prediction_tolerance_rejected",
                 stage="panel_initial",
@@ -1058,7 +1669,7 @@ def predictor_corrector_candidate(
                 prediction_error=prediction_error,
                 prediction_tolerance=prediction_tolerance,
             )
-        return initial_candidate, prediction_error
+        return initial_candidate, prediction_error, ""
 
     prediction_error = abs(float(corrected_candidate["line_coordinate"]))
     if prediction_error > prediction_tolerance and debug_writer is not None:
@@ -1080,7 +1691,70 @@ def predictor_corrector_candidate(
             prediction_error=prediction_error,
             prediction_tolerance=prediction_tolerance,
         )
-    return corrected_candidate, prediction_error
+    return corrected_candidate, prediction_error, ""
+
+
+def streamwise_candidate_for_shell_ray(
+    gradient_mesh: pv.DataSet,
+    history_rows: list[dict[str, float | int]],
+    shell_radius: float,
+    theta: float,
+    axis_origin: np.ndarray,
+    streamwise: np.ndarray,
+    normal: np.ndarray,
+    spanwise: np.ndarray,
+    half_length: float,
+    normal_step: float,
+    shell_spacing: float,
+    prediction_tolerance: float,
+    sensor_floor: float,
+    debug_writer: TerminatedSearchLineDebugWriter | None,
+    shell_index: int,
+    ray_index: int,
+    stage: str,
+) -> tuple[dict[str, float | int | np.ndarray] | None, str]:
+    """
+    Sample a local streamwise fallback line for one shell/ray location.
+
+    This is the conservative line-search path. It is centered on the last accepted point
+    for the same ray, then shifted outward to the target shell radius.
+    """
+    radial_unit = radial_unit_vector(theta, normal, spanwise)
+    bootstrap_stream = float(history_rows[-1]["stream_coord"])
+    line_center = (
+        axis_origin
+        + bootstrap_stream * np.asarray(streamwise, dtype=float)
+        + float(shell_radius) * radial_unit
+    )
+    line_direction = np.asarray(streamwise, dtype=float)
+    line_sample = sample_line(gradient_mesh, line_center, line_direction, half_length, normal_step)
+    candidate, rejection_reason, rejected_candidate = find_shock_node_on_line_result(
+        line_sample,
+        min_height=sensor_floor,
+        selection_mode=PEAK_MODE_NEAREST_CENTER,
+        fallback_global=True,
+        enforce_prominence_check=False,
+        min_line_coordinate=-prediction_tolerance,
+        max_line_coordinate=prediction_tolerance,
+    )
+    if candidate is None and debug_writer is not None:
+        debug_writer.write_search_line(
+            reason=f"{stage}_{rejection_reason or 'no_candidate'}",
+            stage=stage,
+            line_sample=line_sample,
+            line_center=line_center,
+            line_direction=line_direction,
+            half_length=half_length,
+            dt=shell_spacing,
+            dn=normal_step,
+            shell_layer=shell_index,
+            ray_index=ray_index,
+            azimuth_radians=theta,
+            target_radius=shell_radius,
+            line_mode=LINE_MODE_STREAMWISE,
+            candidate=rejected_candidate,
+        )
+    return candidate, rejection_reason
 
 
 # --- Main shock-surface marching routine --------------------------------------
@@ -1089,9 +1763,12 @@ def extract_panel_surface(
     active_points: np.ndarray,
     dt: float,
     dn: float,
+    axis_origin: np.ndarray,
+    axis_origin_source: str,
     streamwise: np.ndarray,
     normal: np.ndarray,
     spanwise: np.ndarray,
+    case_path: Path,
     debug_writer: TerminatedSearchLineDebugWriter | None = None,
 ) -> tuple[pv.PolyData, dict[str, float | int | str]]:
     """
@@ -1106,19 +1783,30 @@ def extract_panel_surface(
     6. Stop when a full shell produces no accepted shock nodes.
     7. Triangulate neighboring accepted nodes into a surface.
     """
+    axis_origin = np.asarray(axis_origin, dtype=float)
     stream_center, stream_half_length = build_streamwise_window(
-        active_points, streamwise, normal, spanwise, dn
+        active_points, streamwise, normal, spanwise, dn, axis_origin
     )
+    stream_axis_center = axis_origin + float(stream_center) * np.asarray(streamwise, dtype=float)
     normal_step = dn
-    search_line_half_length = search_line_half_length_factor * dt
-    prediction_tolerance = panel_prediction_tolerance_dt_factor * dt
-    max_surface_radius = max(float(np.max(perpendicular_radius(active_points, streamwise))), dt)
+    sampling_diagonal = math.hypot(dt, dn)
+    search_line_half_length = search_line_half_length_sampling_diagonal_factor * sampling_diagonal
+    epsilon_tol = epsilon_tol_sampling_diagonal_factor * sampling_diagonal
+    max_surface_radius = max(float(np.max(perpendicular_radius(active_points, streamwise, origin=axis_origin))), dt)
     azimuth_angles = build_surface_azimuth_rays(max_surface_radius, dt)
     ray_count = len(azimuth_angles)
     max_shell_count = int(shell_iteration_safety_limit)
     progress(
         f"  [stage] marching shock surface with {ray_count} rays, dt={dt:.4f}, dn={dn:.4f}, "
+        f"search_half_length={search_line_half_length:.4f}, epsilon_tol={epsilon_tol:.4f}, "
+        f"streamwise_bootstrap_nodes={streamwise_bootstrap_node_count}, "
+        f"warmup_fallback_nodes={panel_guided_warmup_fallback_node_count}, "
+        f"panel_fit_nodes={panel_fit_node_count}, panel_poly_degree={panel_polynomial_degree}, "
         f"safety_limit={max_shell_count}"
+    )
+    progress(
+        f"  [stage] streamwise marching axis anchored by {axis_origin_source} at "
+        f"x={axis_origin[0]:.4f}, y={axis_origin[1]:.4f}, z={axis_origin[2]:.4f}"
     )
 
     # `accepted_rows` stores one metadata dictionary per accepted shock node.
@@ -1131,13 +1819,22 @@ def extract_panel_surface(
     ray_history: dict[int, list[dict[str, float | int]]] = {ray_idx: [] for ray_idx in range(ray_count)}
 
     # First, find the stagnation shock node on a plain streamwise node line.
-    stagnation_candidate = find_stagnation_candidate(
-        gradient_mesh,
-        stream_center,
-        stream_half_length,
-        streamwise,
-        dn,
-    )
+    try:
+        stagnation_candidate = find_stagnation_candidate(
+            gradient_mesh,
+            stream_axis_center,
+            stream_half_length,
+            streamwise,
+            dn,
+        )
+    except ValueError as exc:
+        progress(f"  [warn] stagnation line search failed ({exc}); falling back to reference shock curve")
+        stagnation_candidate = fallback_stagnation_candidate_from_reference_csv(
+            case_path,
+            gradient_mesh,
+            streamwise,
+            normal,
+        )
 
     # This first peak sets the global sensor floor for the rest of the extraction.
     center_peak = float(stagnation_candidate["shock_sensor_smoothed"])
@@ -1147,10 +1844,12 @@ def extract_panel_surface(
         "x": float(stagnation_point[0]),
         "y": float(stagnation_point[1]),
         "z": float(stagnation_point[2]),
-        "stream_coord": float(np.dot(stagnation_point, streamwise)),
+        "stream_coord": float(np.dot(stagnation_point - axis_origin, streamwise)),
         "density": float(stagnation_candidate["density"]),
         "shock_sensor": float(stagnation_candidate["shock_sensor_smoothed"]),
         "shock_sensor_raw": float(stagnation_candidate["shock_sensor_raw"]),
+        "shock_sensor_prominence": float(stagnation_candidate["shock_sensor_prominence"]),
+        "shock_sensor_prominence_ratio": float(stagnation_candidate["shock_sensor_prominence_ratio"]),
         "radius_surface": 0.0,
         "azimuth_radians": 0.0,
         "shell_layer": 0,
@@ -1182,52 +1881,51 @@ def extract_panel_surface(
         streamwise_accept_count = 0
         panel_guided_accept_count = 0
         no_candidate_count = 0
+        prominence_reject_count = 0
         tolerance_reject_count = 0
+        neighbor_reject_count = 0
+        fallback_accept_count = 0
+        weak_prominence_keep_count = 0
         progress(f"  [shell {shell_index}] radius_surface={shell_radius:.4f}")
         for ray_index, theta in enumerate(azimuth_angles):
-            radial_unit = radial_unit_vector(theta, normal, spanwise)
+            line_rejection_reason = ""
 
-            if shell_index == 1:
-                # The first shell has no panel history yet, so it must use streamwise lines.
+            history_rows = panel_history_for_ray(stagnation_row, ray_history, ray_index)
+            if len(history_rows) <= streamwise_bootstrap_node_count:
+                # The nose region is strongly curved, so the first few shells bootstrap
+                # each ray with streamwise lines before polynomial-guided marching. Keep
+                # each bootstrap line local to the last accepted shock node on that ray;
+                # scanning the entire domain here can jump to a different shock/gradient.
                 line_mode = LINE_MODE_STREAMWISE
-                line_center = (
-                    float(stream_center) * np.asarray(streamwise, dtype=float) + float(shell_radius) * radial_unit
-                )
-                line_direction = np.asarray(streamwise, dtype=float)
-                half_length = stream_half_length
-                line_sample = sample_line(gradient_mesh, line_center, line_direction, half_length, normal_step)
-                candidate = find_shock_node_on_line(
-                    line_sample,
-                    min_height=sensor_floor,
-                    selection_mode=PEAK_MODE_FIRST_UPSTREAM,
-                    fallback_global=True,
-                )
-                if candidate is None and debug_writer is not None:
-                    debug_writer.write_search_line(
-                        reason="streamwise_no_candidate",
-                        stage="shell1_streamwise",
-                        line_sample=line_sample,
-                        line_center=line_center,
-                        line_direction=line_direction,
-                        half_length=half_length,
-                        dt=dt,
-                        dn=normal_step,
-                        shell_layer=shell_index,
-                        ray_index=ray_index,
-                        azimuth_radians=theta,
-                        target_radius=shell_radius,
-                        line_mode=LINE_MODE_STREAMWISE,
-                    )
-                prediction_error = 0.0
-            else:
-                # Later shells can use the ray's previously accepted nodes to predict a better
-                # shock-normal direction.
-                history_rows = panel_history_for_ray(stagnation_row, ray_history, ray_index)
-                candidate, prediction_error = predictor_corrector_candidate(
+                candidate, line_rejection_reason = streamwise_candidate_for_shell_ray(
                     gradient_mesh,
                     history_rows,
                     shell_radius,
                     theta,
+                    axis_origin,
+                    streamwise,
+                    normal,
+                    spanwise,
+                    search_line_half_length,
+                    normal_step,
+                    dt,
+                    epsilon_tol,
+                    sensor_floor,
+                    debug_writer,
+                    shell_index,
+                    ray_index,
+                    "streamwise_bootstrap",
+                )
+                prediction_error = 0.0
+            else:
+                # Later shells can use the ray's previously accepted nodes to predict a better
+                # shock-normal direction.
+                candidate, prediction_error, line_rejection_reason = predictor_corrector_candidate(
+                    gradient_mesh,
+                    history_rows,
+                    shell_radius,
+                    theta,
+                    axis_origin,
                     streamwise,
                     normal,
                     spanwise,
@@ -1235,33 +1933,82 @@ def extract_panel_surface(
                     normal_step,
                     sensor_floor,
                     dt,
-                    prediction_tolerance,
+                    epsilon_tol,
                     debug_writer,
                     shell_index,
                     ray_index,
                 )
+                panel_failed = candidate is None or prediction_error > epsilon_tol
+                can_streamwise_fallback = len(history_rows) <= panel_guided_warmup_fallback_node_count
+                if panel_failed and can_streamwise_fallback:
+                    fallback_candidate, fallback_reason = streamwise_candidate_for_shell_ray(
+                        gradient_mesh,
+                        history_rows,
+                        shell_radius,
+                        theta,
+                        axis_origin,
+                        streamwise,
+                        normal,
+                        spanwise,
+                        search_line_half_length,
+                        normal_step,
+                        dt,
+                        epsilon_tol,
+                        sensor_floor,
+                        debug_writer,
+                        shell_index,
+                        ray_index,
+                        "streamwise_warmup_fallback",
+                    )
+                    if fallback_candidate is not None:
+                        candidate = fallback_candidate
+                        line_rejection_reason = ""
+                        prediction_error = 0.0
+                        line_mode = LINE_MODE_STREAMWISE
+                        fallback_accept_count += 1
+                    else:
+                        candidate = None
+                        line_rejection_reason = fallback_reason or line_rejection_reason
+                elif not panel_failed:
+                    line_mode = LINE_MODE_PANEL_GUIDED
+
                 if candidate is None:
-                    no_candidate_count += 1
+                    if line_rejection_reason == "peak_prominence_rejected":
+                        prominence_reject_count += 1
+                    else:
+                        no_candidate_count += 1
                     continue
-                # Reject panel candidates that drift too far from the panel prediction.
-                if prediction_error > prediction_tolerance:
+                # Reject panel candidates that drift too far from the panel prediction after
+                # the warmup fallback window has ended.
+                if int(line_mode) == LINE_MODE_PANEL_GUIDED and prediction_error > epsilon_tol:
                     tolerance_reject_count += 1
                     continue
-                line_mode = LINE_MODE_PANEL_GUIDED
 
             if candidate is None:
-                no_candidate_count += 1
+                if line_rejection_reason == "peak_prominence_rejected":
+                    prominence_reject_count += 1
+                else:
+                    no_candidate_count += 1
                 continue
 
             point = np.asarray(candidate["point"], dtype=float)
+            prominence_ratio = float(candidate["shock_sensor_prominence_ratio"])
+            prominence_ok = (
+                int(line_mode) != LINE_MODE_PANEL_GUIDED
+                or shell_radius < panel_prominence_check_min_radius
+                or prominence_ratio >= line_peak_acceptance_prominence_ratio
+            )
             row = {
                 "x": float(point[0]),
                 "y": float(point[1]),
                 "z": float(point[2]),
-                "stream_coord": float(np.dot(point, streamwise)),
+                "stream_coord": float(np.dot(point - axis_origin, streamwise)),
                 "density": float(candidate["density"]),
                 "shock_sensor": float(candidate["shock_sensor_smoothed"]),
                 "shock_sensor_raw": float(candidate["shock_sensor_raw"]),
+                "shock_sensor_prominence": float(candidate["shock_sensor_prominence"]),
+                "shock_sensor_prominence_ratio": prominence_ratio,
+                "prominence_ok": int(prominence_ok),
                 "radius_surface": float(shell_radius),
                 "azimuth_radians": float(theta),
                 "shell_layer": int(shell_index),
@@ -1276,13 +2023,35 @@ def extract_panel_surface(
             elif line_mode == LINE_MODE_PANEL_GUIDED:
                 panel_guided_accept_count += 1
 
+        accepted_rows_in_shell, weak_prominence_rejected_rows, weak_prominence_keep_count = (
+            reject_unsupported_weak_prominence_rows(accepted_rows_in_shell, ray_count)
+        )
+        if weak_prominence_rejected_rows:
+            prominence_reject_count += len(weak_prominence_rejected_rows)
+            streamwise_accept_count, panel_guided_accept_count = count_line_modes(accepted_rows_in_shell)
+
+        if shell_radius <= shell_neighbor_check_max_radius and accepted_rows_in_shell:
+            stream_tolerance = max(
+                shell_neighbor_stream_tolerance_factor * epsilon_tol,
+                4.0 * dt,
+            )
+            accepted_rows_in_shell, neighbor_rejected_rows = reject_shell_neighbor_outliers(
+                accepted_rows_in_shell,
+                ray_count,
+                stream_tolerance,
+            )
+            neighbor_reject_count = len(neighbor_rejected_rows)
+            if neighbor_reject_count:
+                streamwise_accept_count, panel_guided_accept_count = count_line_modes(accepted_rows_in_shell)
+
         # If an entire shell finds no accepted shock nodes, the outward marching stops here.
         if not accepted_rows_in_shell:
             termination_reason = "empty_shell"
             termination_shell = shell_index
             termination_detail = (
                 f"shell {shell_index} accepted 0/{ray_count} nodes "
-                f"({no_candidate_count} no-candidate, {tolerance_reject_count} tolerance-rejected)"
+                f"({no_candidate_count} no-candidate, {prominence_reject_count} prominence-rejected, "
+                f"{tolerance_reject_count} tolerance-rejected, {neighbor_reject_count} neighbor-rejected)"
             )
             progress(f"  [shell {shell_index}] accepted 0/{ray_count} shock nodes -> stopping")
             break
@@ -1291,12 +2060,37 @@ def extract_panel_surface(
             f"  [shell {shell_index}] accepted {len(accepted_rows_in_shell)}/{ray_count} shock nodes "
             f"({streamwise_accept_count} streamwise, {panel_guided_accept_count} panel-guided)"
         )
-        if no_candidate_count or tolerance_reject_count:
+        if fallback_accept_count:
+            shell_message += f", {fallback_accept_count} warmup fallback"
+        if weak_prominence_keep_count:
+            shell_message += f", kept {weak_prominence_keep_count} weak-prominence gap node(s)"
+        if no_candidate_count or prominence_reject_count or tolerance_reject_count or neighbor_reject_count:
             shell_message += (
                 f", terminated lines: {no_candidate_count} no-candidate, "
-                f"{tolerance_reject_count} tolerance-rejected"
+                f"{prominence_reject_count} prominence-rejected, "
+                f"{tolerance_reject_count} tolerance-rejected, "
+                f"{neighbor_reject_count} neighbor-rejected"
             )
         progress(shell_message)
+
+        terminated_count = ray_count - len(accepted_rows_in_shell)
+        terminated_fraction = terminated_count / float(ray_count)
+        if (
+            max_terminated_search_line_fraction is not None
+            and terminated_fraction >= max_terminated_search_line_fraction
+        ):
+            termination_reason = "too_many_terminated_search_lines"
+            termination_shell = shell_index
+            termination_detail = (
+                f"shell {shell_index} terminated {terminated_count}/{ray_count} search lines "
+                f"({terminated_fraction:.1%}), at or above "
+                f"max_terminated_search_line_fraction={max_terminated_search_line_fraction:.1%}"
+            )
+            progress(
+                f"  [shell {shell_index}] terminated {terminated_count}/{ray_count} search lines "
+                f"({terminated_fraction:.1%}) -> stopping before adding this sparse shell"
+            )
+            break
 
         # A mostly failed shell can create long, spiky strips if we keep marching.
         # Once fewer than this many rays survive, treat the shock surface as ended.
@@ -1328,12 +2122,41 @@ def extract_panel_surface(
         f"(shell={termination_shell}, {termination_detail})"
     )
 
+    accepted_rows, cleanup_summary = cleanup_accepted_surface_nodes(accepted_rows, ray_count)
+    removed_by_cleanup = cleanup_summary["before_count"] - cleanup_summary["after_count"]
+    if removed_by_cleanup:
+        progress(
+            f"  [cleanup] removed {removed_by_cleanup} straggler node(s): "
+            f"{cleanup_summary['small_component_removed']} small-component, "
+            f"{cleanup_summary['dangling_removed']} dangling-endpoint "
+            f"over {cleanup_summary['dangling_iterations']} pass(es), "
+            f"{cleanup_summary['final_component_removed']} final-component"
+        )
+    else:
+        progress("  [cleanup] no straggler nodes removed")
+
+    # Rebuild the point list and `(shell, ray) -> point index` map after cleanup. This keeps
+    # the written VTP/CSV and the triangulation in sync with the accepted node set.
+    accepted_shock_nodes = []
+    shock_node_index_by_shell_ray = {}
+    for row in accepted_rows:
+        point = np.asarray([row["x"], row["y"], row["z"]], dtype=float)
+        local_idx = len(accepted_shock_nodes)
+        accepted_shock_nodes.append(point)
+        shock_node_index_by_shell_ray[surface_node_key(row)] = local_idx
+
     # Build the actual ParaView surface object, then attach the per-point metadata so
     # the same information is available in ParaView and in the CSV export.
     poly = pv.PolyData(np.asarray(accepted_shock_nodes))
     poly.point_data["Density"] = np.asarray([row["density"] for row in accepted_rows], dtype=float)
     poly.point_data["ShockSensor"] = np.asarray([row["shock_sensor"] for row in accepted_rows], dtype=float)
     poly.point_data["ShockSensorRaw"] = np.asarray([row["shock_sensor_raw"] for row in accepted_rows], dtype=float)
+    poly.point_data["ShockSensorProminence"] = np.asarray(
+        [row["shock_sensor_prominence"] for row in accepted_rows], dtype=float
+    )
+    poly.point_data["ShockSensorProminenceRatio"] = np.asarray(
+        [row["shock_sensor_prominence_ratio"] for row in accepted_rows], dtype=float
+    )
     poly.point_data["RadiusSurface"] = np.asarray([row["radius_surface"] for row in accepted_rows], dtype=float)
     poly.point_data["AzimuthRadians"] = np.asarray([row["azimuth_radians"] for row in accepted_rows], dtype=float)
     poly.point_data["ShellLayer"] = np.asarray([row["shell_layer"] for row in accepted_rows], dtype=int)
@@ -1382,7 +2205,7 @@ def extract_panel_surface(
         "cell_count": poly.n_cells,
         "center_peak": center_peak,
         "sensor_floor": sensor_floor,
-        "prediction_tolerance": prediction_tolerance,
+        "prediction_tolerance": epsilon_tol,
         "dt": dt,
         "dn": dn,
         "ray_count": ray_count,
@@ -1391,6 +2214,10 @@ def extract_panel_surface(
         "termination_shell": termination_shell,
         "panel_lines": sum(1 for row in accepted_rows if int(row["line_mode"]) == LINE_MODE_PANEL_GUIDED),
         "streamwise_lines": sum(1 for row in accepted_rows if int(row["line_mode"]) == LINE_MODE_STREAMWISE),
+        "cleanup_removed": removed_by_cleanup,
+        "cleanup_dangling_removed": cleanup_summary["dangling_removed"],
+        "cleanup_small_component_removed": cleanup_summary["small_component_removed"]
+        + cleanup_summary["final_component_removed"],
     }
     return poly, summary
 
@@ -1412,6 +2239,8 @@ def write_surface_outputs(case_path: Path, surface: pv.PolyData):
                 "density",
                 "shock_sensor",
                 "shock_sensor_raw",
+                "shock_sensor_prominence",
+                "shock_sensor_prominence_ratio",
                 "radius_surface",
                 "azimuth_radians",
                 "shell_layer",
@@ -1427,6 +2256,8 @@ def write_surface_outputs(case_path: Path, surface: pv.PolyData):
         density = np.asarray(surface["Density"])
         shock_sensor = np.asarray(surface["ShockSensor"])
         shock_sensor_raw = np.asarray(surface["ShockSensorRaw"])
+        shock_sensor_prominence = np.asarray(surface["ShockSensorProminence"])
+        shock_sensor_prominence_ratio = np.asarray(surface["ShockSensorProminenceRatio"])
         radius_surface = np.asarray(surface["RadiusSurface"])
         azimuth_radians = np.asarray(surface["AzimuthRadians"])
         shell_layer = np.asarray(surface["ShellLayer"])
@@ -1446,6 +2277,8 @@ def write_surface_outputs(case_path: Path, surface: pv.PolyData):
                     float(density[idx]),
                     float(shock_sensor[idx]),
                     float(shock_sensor_raw[idx]),
+                    float(shock_sensor_prominence[idx]),
+                    float(shock_sensor_prominence_ratio[idx]),
                     float(radius_surface[idx]),
                     float(azimuth_radians[idx]),
                     int(shell_layer[idx]),
@@ -1493,6 +2326,15 @@ def process_case(paths: StudyPaths, case_dir: str):
         aoa_degrees = load_case_aoa_degrees(paths.generated_config_dir, case_path)
         progress(f"  [stage] building AoA-aligned frame (aoa={aoa_degrees:.1f} deg)")
         streamwise, normal, spanwise = streamwise_basis_from_aoa(aoa_degrees)
+        body_anchor, body_anchor_source = choose_body_stagnation_anchor(
+            paths.study_root,
+            case_path,
+            streamwise,
+        )
+        progress(
+            f"  [stage] body stagnation anchor from {body_anchor_source}: "
+            f"x={body_anchor[0]:.4f}, y={body_anchor[1]:.4f}, z={body_anchor[2]:.4f}"
+        )
         points = np.asarray(gradient_mesh.points)
         gradient = np.asarray(gradient_mesh["gradient"], dtype=float)
         gradient = np.nan_to_num(gradient, nan=0.0, posinf=0.0, neginf=0.0)
@@ -1501,7 +2343,7 @@ def process_case(paths: StudyPaths, case_dir: str):
         gradient_mesh["ShockSensorRaw"] = shock_sensor_raw
 
         progress("  [stage] locating stagnation shock node and active shock region")
-        _, center_peak = choose_stagnation_shock_node(points, shock_sensor_raw, streamwise)
+        _, center_peak = choose_stagnation_shock_node(points, shock_sensor_raw, streamwise, body_anchor)
         # Ignore very weak gradients far from the shock so the marching logic focuses on the
         # meaningful part of the field.
         active_mask = shock_sensor_raw >= center_peak * surface_sensor_min_fraction
@@ -1535,7 +2377,17 @@ def process_case(paths: StudyPaths, case_dir: str):
     try:
         with timed_stage(stage_times, "extract shock surface"):
             surface, summary = extract_panel_surface(
-                gradient_mesh, active_points, dt, dn, streamwise, normal, spanwise, debug_writer=debug_writer
+                gradient_mesh,
+                active_points,
+                dt,
+                dn,
+                body_anchor,
+                body_anchor_source,
+                streamwise,
+                normal,
+                spanwise,
+                case_path,
+                debug_writer=debug_writer,
             )
     finally:
         debug_writer.close()
@@ -1549,7 +2401,8 @@ def process_case(paths: StudyPaths, case_dir: str):
         f"aoa={aoa_degrees:.1f}, center_peak={summary['center_peak']:.3f}, "
         f"dt={summary['dt']:.4f}, dn={summary['dn']:.4f}, rays={summary['ray_count']}, "
         f"panel_lines={summary['panel_lines']}, streamwise_lines={summary['streamwise_lines']}, "
-        f"max_shell={summary['max_shell_layer']}, elapsed={elapsed_seconds / 60.0:.1f} min)"
+        f"max_shell={summary['max_shell_layer']}, cleanup_removed={summary['cleanup_removed']}, "
+        f"elapsed={elapsed_seconds / 60.0:.1f} min)"
     )
     progress(f"  [ok ] wrote {csv_path}")
     progress(
@@ -1600,7 +2453,11 @@ def main() -> int:
     print(
         f"Spacing from code settings: dt={dt:.4f}, dn={dn:.4f}, "
         f"sensor floor: {surface_sensor_min_fraction:g} of center peak, "
-        f"savgol smoothing length/poly: {savgol_smoothing_length:.4f}/{savgol_poly_order}"
+        f"savgol smoothing length/poly: {savgol_smoothing_length:.4f}/{savgol_poly_order}, "
+        f"panel predictor: degree {panel_polynomial_degree} using {panel_fit_node_count} nodes, "
+        f"peak prominence ratio min: {line_peak_acceptance_prominence_ratio:.3f} "
+        f"after radius {panel_prominence_check_min_radius:.2f}, "
+        f"surface cleanup: {'on' if surface_cleanup_enabled else 'off'}"
     )
     if env_flag("CFD_EXPORT_TERMINATED_SEARCH_LINES", export_terminated_search_lines):
         limit = env_int("CFD_TERMINATED_SEARCH_LINE_LIMIT", terminated_search_line_max_lines)
