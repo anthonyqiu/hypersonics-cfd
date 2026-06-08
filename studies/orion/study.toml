@@ -1,7 +1,8 @@
 # One editable matrix for the managed Orion cases.
-# Two study types are defined here:
+# Three study types are defined here:
 #   1) AoA campaign cases
 #   2) Mesh refinement study cases
+#   3) M9 symmetric-mesh refinement study cases
 #
 # Edit common values once, then use ordered override rules for subsets.
 
@@ -25,6 +26,7 @@ linear_solver_iter = 100
 linear_solver_error = "1E-6"
 mg_post_smooth = "( 0, 0, 0, 0 )"
 conv_residual_minval = -8
+conv_startiter = 0
 screen_output = "(INNER_ITER, WALL_TIME, RMS_DENSITY, RMS_MOMENTUM-X, RMS_MOMENTUM-Y, RMS_MOMENTUM-Z, RMS_ENERGY, RMS_NU_TILDE, DRAG)"
 volume_output = "MACH, PRESSURE, TEMPERATURE, DENSITY, HEAT_FLUX, Y_PLUS"
 
@@ -39,6 +41,19 @@ job_account = "rrg-jphickey"
 fine = "fine.su2"
 medium = "medium.su2"
 coarse = "coarse.su2"
+fine_sym = { file = "fine_sym.su2", boundary_condition_set = "half_symmetry" }
+very_fine_sym = { file = "very_fine_sym.su2", boundary_condition_set = "half_symmetry" }
+
+[boundary_conditions.full]
+marker_heatflux = "( ORION_SURFACE, 0.0 )"
+marker_far = "( FARFIELD )"
+marker_monitoring = "( ORION_SURFACE )"
+
+[boundary_conditions.half_symmetry]
+marker_heatflux = "( ORION_SURFACE, 0.0 )"
+marker_far = "( FARFIELD )"
+marker_sym = "( SYMMETRY )"
+marker_monitoring = "( ORION_SURFACE )"
 
 [generation.studies.aoa]
 mach_profiles = ["m1.5", "m3", "m6", "m9"]
@@ -50,6 +65,12 @@ case_name_pattern = "m{mach}_aoa{aoa}"
 mach_profiles = ["m1.5", "m3", "m6", "m9"]
 aoa = 0
 mesh_levels = ["coarse", "medium", "fine"]
+case_name_pattern = "m{mach}_{mesh_level}"
+
+[generation.studies.m9_sym_refinement]
+mach_profiles = ["m9"]
+aoa = 0
+mesh_levels = ["fine_sym", "very_fine_sym"]
 case_name_pattern = "m{mach}_{mesh_level}"
 
 [aliases]
@@ -80,22 +101,28 @@ cfl_adapt_param = "(0.5, 1.1, 0.05, 0.5)"
 conv_residual_minval = -5
 
 [profiles.m9]
+mesh_level = "fine_sym"
 mach_number = "9"
 reynolds_number = "1.029342800042823E09"
 cfl_adapt = false
 cfl_number = "0.001"
 cfl_adapt_param = "(0.5, 1.1, 0.01, 0.05)"
-
+conv_residual_minval = -6
+conv_startiter = 250
 # Override rules are applied in order, top to bottom.
 # You can override any key already used by the templates.
 # Match on any combination of:
 #   match_cases      = ["m6_aoa40", "m6_aoa50"]
 #   match_study      = ["aoa", "refinement"]
 #   match_mach       = ["6", "9"]
-#   match_mesh_level = ["coarse", "medium", "fine"]
+#   match_mesh_level = ["coarse", "medium", "fine", "fine_sym", "very_fine_sym"]
 #   match_aoa        = [40, 50, 60]
 #   match_aoa_min    = 40
 #   match_aoa_max    = 60
+# Boundary conditions can vary by selecting a named set:
+#   boundary_condition_set = "half_symmetry"
+# or by overriding/adding individual marker keys:
+#   marker_sym = "( SYMMETRY )"
 #
 # Example: restart a subset of cases.
 # [[overrides]]

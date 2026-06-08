@@ -6,9 +6,17 @@ from pathlib import Path
 from typing import Any
 
 
-CASE_NAME_RE = re.compile(r"^(m\d+(?:\.\d+)?)(?:_aoa\d+(?:p\d+)?|_(?:coarse|medium|fine))$")
-REFINEMENT_SUFFIXES = ("_coarse", "_medium", "_fine")
-MESH_LEVEL_ORDER = {"coarse": 0, "medium": 1, "fine": 2}
+CASE_NAME_RE = re.compile(
+    r"^(m\d+(?:\.\d+)?)(?:_aoa\d+(?:p\d+)?(?:_[A-Za-z0-9][A-Za-z0-9_.-]*)?|_[A-Za-z0-9][A-Za-z0-9_.-]*)$"
+)
+REFINEMENT_SUFFIXES = ("_coarse", "_medium", "_fine", "_fine_sym", "_very_fine_sym")
+MESH_LEVEL_ORDER = {
+    "coarse": 0,
+    "medium": 1,
+    "fine": 2,
+    "fine_sym": 3,
+    "very_fine_sym": 4,
+}
 
 
 def format_aoa_token(value: Any) -> str:

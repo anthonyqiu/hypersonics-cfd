@@ -18,6 +18,18 @@ from layout import StudyPaths, choose_study_paths_interactively
 
 PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z0-9_]+)\s*}}")
 OLD_CASE_LOCAL_LINKS = ("mesh.su2", "fine.su2", "medium.su2", "coarse.su2")
+DEFAULT_BOUNDARY_CONDITION_SET = "full"
+DEFAULT_BOUNDARY_CONDITIONS = {
+    "marker_heatflux": "( ORION_SURFACE, 0.0 )",
+    "marker_far": "( FARFIELD )",
+    "marker_monitoring": "( ORION_SURFACE )",
+}
+MARKER_COMMENTS = {
+    "MARKER_HEATFLUX": "% Navier-Stokes wall boundary marker(s) (NONE = no marker)",
+    "MARKER_FAR": "% Far-field boundary marker(s) (NONE = no marker)",
+    "MARKER_SYM": "% Symmetry boundary marker(s) (NONE = no marker)",
+    "MARKER_MONITORING": "% Marker(s) of the surface where the functional (Cd, Cl, etc.) will be evaluated",
+}
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -175,6 +187,37 @@ def apply_override_rules(base_spec: dict[str, Any], override_rules: list[dict[st
     return merged
 
 
+def mesh_file_and_attributes(meshes: dict[str, Any], mesh_level: str) -> tuple[str, dict[str, Any]]:
+    if mesh_level not in meshes:
+        available = ", ".join(sorted(meshes))
+        raise KeyError(
+            f"mesh level {mesh_level!r} is not defined. Available mesh levels: {available}"
+        )
+
+    mesh_definition = meshes[mesh_level]
+    if not isinstance(mesh_definition, dict):
+        return str(mesh_definition), {}
+
+    file_value = (
+        mesh_definition.get("file")
+        or mesh_definition.get("filename")
+        or mesh_definition.get("path")
+    )
+    if not file_value:
+        raise KeyError(
+            f"mesh level {mesh_level!r} uses a table definition but has no file/filename/path value"
+        )
+
+    attributes = {
+        str(key): value
+        for key, value in mesh_definition.items()
+        if key not in {"file", "filename", "path"}
+    }
+    if "bc_set" in attributes and "boundary_condition_set" not in attributes:
+        attributes["boundary_condition_set"] = attributes.pop("bc_set")
+    return str(file_value), attributes
+
+
 def resolve_mesh_reference(paths: StudyPaths, mesh_value: str) -> str:
     raw = Path(str(mesh_value).strip())
     candidates: list[Path] = []
@@ -195,6 +238,94 @@ def resolve_mesh_reference(paths: StudyPaths, mesh_value: str) -> str:
         mesh_path = candidates[1] if len(candidates) > 1 else candidates[0]
 
     return str(mesh_path.resolve(strict=False))
+
+
+def marker_config_key(key: str) -> str:
+    marker_key = str(key).strip()
+    if marker_key.upper().startswith("MARKER_"):
+        return marker_key.upper()
+    return f"MARKER_{marker_key.removeprefix('marker_').upper()}"
+
+
+def set_marker_entry(entries: dict[str, Any], key: str, value: Any) -> None:
+    config_key = marker_config_key(key)
+    for existing_key in list(entries):
+        if marker_config_key(existing_key) == config_key:
+            entries[existing_key] = value
+            return
+    entries[key] = value
+
+
+def format_su2_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return format_yes_no(value)
+    if isinstance(value, (list, tuple)):
+        return "( " + ", ".join(str(item) for item in value) + " )"
+    return str(value).strip()
+
+
+def raw_lines_from_value(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [line for line in value.splitlines() if line.strip()]
+    return [str(line).strip() for line in value if str(line).strip()]
+
+
+def boundary_condition_sets(matrix: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    configured = matrix.get("boundary_conditions")
+    if configured is None:
+        return {DEFAULT_BOUNDARY_CONDITION_SET: dict(DEFAULT_BOUNDARY_CONDITIONS)}
+    return {
+        str(name): dict(values)
+        for name, values in dict(configured).items()
+    }
+
+
+def render_boundary_condition_block(matrix: dict[str, Any], spec: dict[str, Any]) -> str:
+    set_name = str(spec.get("boundary_condition_set", DEFAULT_BOUNDARY_CONDITION_SET))
+    sets = boundary_condition_sets(matrix)
+    if set_name not in sets:
+        available = ", ".join(sorted(sets))
+        raise KeyError(
+            f"unknown boundary condition set {set_name!r}. Available sets: {available}"
+        )
+
+    entries = dict(sets[set_name])
+    raw_lines: list[str] = []
+    for raw_key in ("lines", "raw_lines"):
+        raw_lines.extend(raw_lines_from_value(entries.pop(raw_key, None)))
+
+    for key, value in spec.items():
+        key_text = str(key)
+        if key_text.lower().startswith("marker_") or key_text.upper().startswith("MARKER_"):
+            set_marker_entry(entries, key_text, value)
+
+    raw_lines.extend(raw_lines_from_value(spec.get("boundary_condition_lines")))
+
+    lines: list[str] = []
+    for key, value in entries.items():
+        if key in {"name", "description"}:
+            continue
+        formatted_value = format_su2_value(value)
+        if not formatted_value:
+            continue
+        config_key = marker_config_key(key)
+        comment = MARKER_COMMENTS.get(config_key)
+        if lines:
+            lines.append("%")
+        if comment:
+            lines.append(comment)
+        lines.append(f"{config_key}= {formatted_value}")
+
+    if raw_lines:
+        if lines:
+            lines.append("%")
+        lines.extend(raw_lines)
+
+    if not lines:
+        return "% No boundary condition markers configured"
+    return "\n".join(lines)
 
 
 def case_runtime_value(case_dir: Path, stem: str) -> str:
@@ -229,11 +360,6 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                 aoa_token = format_aoa_token(aoa)
                 for mesh_level in mesh_levels:
                     mesh_level = str(mesh_level)
-                    if mesh_level not in meshes:
-                        available = ", ".join(sorted(meshes))
-                        raise KeyError(
-                            f"mesh level {mesh_level!r} is not defined. Available mesh levels: {available}"
-                        )
 
                     spec = dict(defaults)
                     spec.update(profile)
@@ -243,7 +369,6 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                     spec["aoa_value"] = float(aoa)
                     spec["mach_token"] = mach_token
                     spec["mesh_level"] = mesh_level
-                    spec["mesh_filename"] = resolve_mesh_reference(paths, str(meshes[mesh_level]))
                     spec["case_name"] = pattern.format(
                         mach=mach_token,
                         aoa=aoa_token,
@@ -251,6 +376,13 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                         study=study_name,
                     )
                     spec = apply_override_rules(spec, override_rules)
+                    mesh_value, mesh_attributes = mesh_file_and_attributes(
+                        meshes,
+                        str(spec["mesh_level"]),
+                    )
+                    for key, value in mesh_attributes.items():
+                        spec.setdefault(key, value)
+                    spec["mesh_filename"] = resolve_mesh_reference(paths, mesh_value)
 
                     case_dir = paths.case_path(str(spec["case_name"]))
                     spec["solution_filename"] = str((case_dir / "restart_flow.dat").resolve(strict=False))
@@ -279,6 +411,7 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                     spec["volume_output_block"] = (
                         f"VOLUME_OUTPUT= {volume_output}" if volume_output else ""
                     )
+                    spec["boundary_condition_block"] = render_boundary_condition_block(matrix, spec)
 
                     if spec["case_name"] in seen_case_names:
                         raise ValueError(f"duplicate generated case name: {spec['case_name']}")

@@ -218,7 +218,7 @@ is_aoa_case() {
 }
 
 is_refinement_case() {
-    [[ "$1" =~ _(coarse|medium|fine)$ ]]
+    [[ "$1" =~ _(coarse|medium|fine|fine_sym|very_fine_sym)$ ]]
 }
 
 copy_file() {

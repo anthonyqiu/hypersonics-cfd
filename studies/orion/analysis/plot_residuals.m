@@ -137,7 +137,7 @@ function selected = case_selection_menu(all_cases)
         cases     = mach_info.cases;
         aoa_cases = cases(contains(cases, '_aoa'));
         ref_cases = cases(cellfun(@(c) any(contains(c, ...
-            {'_coarse', '_medium', '_fine'})), cases));
+            {'_coarse', '_medium', '_fine', '_fine_sym', '_very_fine_sym'})), cases));
 
         fprintf('  -- %s %s\n', upper(mach), repmat('-', 1, max(1, 36 - numel(mach))));
 
@@ -171,7 +171,7 @@ function selected = case_selection_menu(all_cases)
     fprintf('  -- Bulk %s\n', repmat('-', 1, 33));
     all_aoa = all_cases(contains(all_cases, '_aoa'));
     all_ref = all_cases(cellfun(@(c) any(contains(c, ...
-        {'_coarse', '_medium', '_fine'})), all_cases));
+        {'_coarse', '_medium', '_fine', '_fine_sym', '_very_fine_sym'})), all_cases));
 
     if ~isempty(all_aoa)
         idx = idx + 1;
@@ -258,7 +258,7 @@ function case_label = format_case_label(case_name)
         return;
     end
 
-    tok = regexp(case_name, '^m([0-9p\.]+)_(coarse|medium|fine)$', 'tokens', 'once');
+    tok = regexp(case_name, '^m([0-9p\.]+)_(coarse|medium|fine|fine_sym|very_fine_sym)$', 'tokens', 'once');
     if ~isempty(tok)
         M_val = str2double(strrep(tok{1}, 'p', '.'));
         mesh_label = tok{2};

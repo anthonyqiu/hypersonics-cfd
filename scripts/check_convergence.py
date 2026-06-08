@@ -11,7 +11,9 @@ from case_selection import choose_postprocess_cases_interactively, prompt_with_d
 from layout import choose_study_paths_interactively
 
 
-CASE_NAME_RE = re.compile(r"^m\d+(?:\.\d+)?(?:_aoa\d+(?:p\d+)?|_(?:coarse|medium|fine))$")
+CASE_NAME_RE = re.compile(
+    r"^m\d+(?:\.\d+)?(?:_aoa\d+(?:p\d+)?(?:_[A-Za-z0-9][A-Za-z0-9_.-]*)?|_[A-Za-z0-9][A-Za-z0-9_.-]*)$"
+)
 
 
 def is_case_dir(path: Path) -> bool:
