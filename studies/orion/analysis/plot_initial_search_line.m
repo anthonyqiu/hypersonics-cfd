@@ -1,11 +1,12 @@
 function profile = plot_initial_search_line(case_name)
-analysis_dir  = resolve_script_dir();
+helpers       = orion_case_helpers();
+analysis_dir  = helpers.resolve_script_dir();
 study_dir     = fileparts(analysis_dir);
 cases_dir     = fullfile(study_dir, 'data', 'cases');
 required_file = 'initial_search_line_profile.csv';
 
 if nargin < 1 || strlength(string(case_name)) == 0
-    case_name = choose_case_interactively(cases_dir, required_file);
+    case_name = helpers.choose_case_interactively(cases_dir, required_file, 'initial search-line plotting');
     if strlength(string(case_name)) == 0
         fprintf('No case selected. Exiting.\n');
         profile = table();
@@ -110,54 +111,4 @@ if ~usejava('desktop')
     drawnow;
 end
 
-end
-
-
-function case_name = choose_case_interactively(cases_dir, required_file)
-case_names = discover_cases(cases_dir, required_file);
-if isempty(case_names)
-    error(['No case folders with %s found in %s\n' ...
-        'Run python3 scripts/export_initial_search_line.py first.'], required_file, cases_dir);
-end
-
-fprintf('\nSelect case for initial search-line plotting:\n\n');
-for idx = 1:numel(case_names)
-    fprintf('  %2d) %s\n', idx, case_names{idx});
-end
-fprintf('\n  q) Quit\n\n');
-
-choice = strtrim(input(sprintf('Case [1-%d/q]: ', numel(case_names)), 's'));
-if strcmpi(choice, 'q')
-    case_name = "";
-    return;
-end
-
-index = str2double(choice);
-if isnan(index) || index < 1 || index > numel(case_names)
-    error('Invalid case selection.');
-end
-case_name = string(case_names{index});
-end
-
-
-function case_names = discover_cases(cases_dir, required_file)
-d = dir(cases_dir);
-d = d([d.isdir]);
-names = {d.name};
-mask = ~strcmp(names, '.') & ~strcmp(names, '..') & ...
-       ~cellfun(@isempty, regexp(names, '^m[0-9p\.]+', 'once'));
-
-candidate_cases = sort(names(mask));
-keep_case = cellfun(@(name) isfile(fullfile(cases_dir, name, required_file)), candidate_cases);
-case_names = candidate_cases(keep_case);
-end
-
-
-function script_dir = resolve_script_dir()
-script_path = mfilename('fullpath');
-if isempty(script_path)
-    script_dir = pwd;
-else
-    script_dir = fileparts(script_path);
-end
 end

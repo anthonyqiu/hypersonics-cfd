@@ -7,7 +7,7 @@ Reusable workflows for hypersonic CFD campaigns, with study definitions in Git a
 ```text
 hypersonics-cfd/
   docs/                     # design notes and migration reports
-  scripts/                  # single home for Python workflow code and shell helpers
+  scripts/                  # Python workflow code, shell helpers, and retired tools under obsolete/
   studies/
     orion/                  # one concrete campaign
       study.toml            # case matrix and study defaults
@@ -15,7 +15,7 @@ hypersonics-cfd/
       meshes/               # study meshes (kept local, not in Git history)
       analysis/             # MATLAB helpers and small study notes
       data/                 # case folders and outputs (ignored by Git)
-      build/                # generated configs, manifests, and batch logs (ignored by Git)
+      build/                # generated configs and other runtime products (ignored by Git)
     ellipsoids/             # placeholder for the next campaign
   templates/
     su2/                    # shared SU2 config templates
@@ -27,11 +27,12 @@ hypersonics-cfd/
 - Keep the active workflow code in `scripts/` so each Python tool has one canonical home.
 - Keep study-specific metadata and canonical inputs under `studies/<campaign>/`.
 - Keep generated configs under `studies/<campaign>/build/`.
-- Keep solver outputs, restart files, per-case solver logs, and derived artifacts under `studies/<campaign>/data/`.
+- Keep active solver outputs, restart files, per-case solver logs, and derived artifacts under `studies/<campaign>/data/cases/`.
 - Treat meshes and geometry as canonical study inputs, but keep very large binary inputs out of ordinary Git history.
-- Delete legacy backups once the managed workflow owns the active layout, instead of preserving duplicate historical copies inside the repo.
-- Render runtime configs with explicit case-folder I/O paths so solver outputs always land under `studies/<campaign>/data/cases/<case>/` even though the configs themselves live in `build/`.
-- Keep study-level batch metadata together by writing shock-extraction manifests and SLURM logs under `studies/<campaign>/build/`.
+- Keep obsolete case backups grouped under `studies/<campaign>/data/obsolete/cases/` instead of mixing them into the active case folder.
+- Submit solver jobs from the case directory and use case-local SU2 output names so solver outputs land under `studies/<campaign>/data/cases/<case>/` even though generated configs live in `build/`.
+- Keep solver and postprocess logs next to the case data that produced them.
+- Keep active case names clean: symmetric cases are the only supported convention; old backups live under `data/obsolete/`.
 
 ## Common commands
 
@@ -41,16 +42,24 @@ Preview or stage case configs:
 python3 scripts/setup_cases.py
 ```
 
-Dry-run solver submissions:
+Dry-run the end-to-end symmetric workflow (solver -> mirror -> slices -> shock extraction):
 
 ```bash
-python3 scripts/submit_cases.py
+python3 scripts/submit_workflow.py
 ```
 
-Dry-run shock extraction batch submissions:
+Dry-run or submit specific cases without prompts:
 
 ```bash
-python3 scripts/submit_shock_extraction.py
+python3 scripts/submit_workflow.py --dry-run --cases m1p5_medium,m1p5_fine --full-workflow
+python3 scripts/submit_workflow.py --submit --cases m1p5_medium --solver --mirror --slices --shock
+```
+
+Check managed workflow status:
+
+```bash
+python3 scripts/workflow_status.py
+python3 scripts/workflow_status.py --cases m1p5_medium,m1p5_fine,m1p5_aoa0
 ```
 
 Run the interactive shock extractor directly:
@@ -59,10 +68,16 @@ Run the interactive shock extractor directly:
 python3 scripts/extract_shock_surface.py
 ```
 
+Run post-processing against a mirrored symmetric flow field:
+
+```bash
+CFD_CASE=m9_aoa0 python3 scripts/extract_shock_surface.py
+```
+
 Export terminated shock search lines while running the extractor:
 
 ```bash
-CFD_EXPORT_TERMINATED_SEARCH_LINES=1 CFD_CASE=m3_coarse python3 scripts/extract_shock_surface.py
+CFD_EXPORT_TERMINATED_SEARCH_LINES=1 CFD_CASE=m9_aoa0 python3 scripts/extract_shock_surface.py
 ```
 
 Check convergence interactively:

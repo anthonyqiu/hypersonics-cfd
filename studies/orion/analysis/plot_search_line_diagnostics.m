@@ -4,7 +4,8 @@ function diagnostics = plot_search_line_diagnostics(case_name)
 % The x-axis is always n, the local coordinate along each search line. This makes the
 % plots directly comparable to the 1D peak-picking logic inside extract_shock_surface.py.
 
-analysis_dir = resolve_script_dir();
+helpers = orion_case_helpers();
+analysis_dir = helpers.resolve_script_dir();
 study_dir = fileparts(analysis_dir);
 cases_dir = fullfile(study_dir, 'data', 'cases');
 
@@ -13,7 +14,8 @@ terminated_profile_file = 'terminated_search_line_profiles.csv';
 terminated_summary_file = 'terminated_search_line_summary.csv';
 
 if nargin < 1 || strlength(string(case_name)) == 0
-    case_name = choose_case_interactively(cases_dir, initial_file, terminated_profile_file);
+    case_name = helpers.choose_case_interactively( ...
+        cases_dir, {initial_file, terminated_profile_file}, 'search-line diagnostic plotting');
     if strlength(string(case_name)) == 0
         fprintf('No case selected. Exiting.\n');
         diagnostics = struct();
@@ -204,61 +206,5 @@ function require_columns(table_data, required_columns)
 missing_columns = required_columns(~ismember(required_columns, string(table_data.Properties.VariableNames)));
 if ~isempty(missing_columns)
     error('CSV is missing required columns: %s', strjoin(cellstr(missing_columns), ', '));
-end
-end
-
-
-function case_name = choose_case_interactively(cases_dir, initial_file, terminated_profile_file)
-case_names = discover_cases(cases_dir, initial_file, terminated_profile_file);
-if isempty(case_names)
-    error(['No case folders with both %s and %s were found in %s\n' ...
-        'Run the initial-line exporter and shock extractor with terminated-line export first.'], ...
-        initial_file, terminated_profile_file, cases_dir);
-end
-
-fprintf('\nSelect case for search-line diagnostic plotting:\n\n');
-for idx = 1:numel(case_names)
-    fprintf('  %2d) %s\n', idx, case_names{idx});
-end
-fprintf('\n  q) Quit\n\n');
-
-choice = strtrim(input(sprintf('Case [1-%d/q]: ', numel(case_names)), 's'));
-if strcmpi(choice, 'q')
-    case_name = "";
-    return;
-end
-
-index = str2double(choice);
-if isnan(index) || index < 1 || index > numel(case_names)
-    error('Invalid case selection.');
-end
-case_name = string(case_names{index});
-end
-
-
-function case_names = discover_cases(cases_dir, initial_file, terminated_profile_file)
-d = dir(cases_dir);
-d = d([d.isdir]);
-names = {d.name};
-mask = ~strcmp(names, '.') & ~strcmp(names, '..') & ...
-       ~cellfun(@isempty, regexp(names, '^m[0-9p\.]+', 'once'));
-
-candidate_cases = sort(names(mask));
-keep_case = false(size(candidate_cases));
-for idx = 1:numel(candidate_cases)
-    case_dir = fullfile(cases_dir, candidate_cases{idx});
-    keep_case(idx) = isfile(fullfile(case_dir, initial_file)) && ...
-        isfile(fullfile(case_dir, terminated_profile_file));
-end
-case_names = candidate_cases(keep_case);
-end
-
-
-function script_dir = resolve_script_dir()
-script_path = mfilename('fullpath');
-if isempty(script_path)
-    script_dir = pwd;
-else
-    script_dir = fileparts(script_path);
 end
 end

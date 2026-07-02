@@ -4,7 +4,7 @@ Extract a 3D bow-shock surface from one CFD volume solution.
 
 If you are reading this file as a beginner, the big picture is:
 
-1. Read one `flow.vtu` file.
+1. Read one flow-field file, defaulting to `flow_full.vtu`.
 2. Compute `|grad(rho)|`, the magnitude of the density gradient.
 3. Use that quantity as a "shock sensor" because shocks produce strong density jumps.
 4. Find an easy first shock point near the stagnation line.
@@ -45,7 +45,12 @@ import numpy as np
 import pyvista as pv
 from scipy.signal import find_peaks, savgol_filter
 
-from case_selection import deduplicate_case_names, choose_postprocess_cases_interactively, resolve_case_path
+from case_selection import (
+    cases_from_environment,
+    choose_postprocess_cases_interactively,
+    deduplicate_case_names,
+    resolve_case_path,
+)
 from layout import StudyPaths, choose_study_paths_interactively, get_study_paths
 
 try:
@@ -56,7 +61,7 @@ except ImportError:
 # --------------- USER SETTINGS ---------------
 # This is the main tuning block for the extractor. The code below uses these values directly,
 # so this is the first place to look if you want to change spacing or sensitivity.
-vtu_name = "flow.vtu"
+vtu_name = os.environ.get("CFD_FLOW_FILE", "flow_full.vtu").strip() or "flow_full.vtu"
 density_scalar = "Density"
 output_surface_name = "shock_surface.vtp"
 output_csv_name = "shock_surface.csv"
@@ -214,7 +219,7 @@ def parse_case_aoa_from_text(text: str) -> float | None:
 
 
 def parse_case_aoa_from_name(case_name: str) -> float | None:
-    """Fallback AoA parser for case names like `m3_aoa15` or `m1.5_aoa24p5`."""
+    """Fallback AoA parser for case names like `m3_aoa15` or `m1p5_aoa24p5`."""
     match = AOA_NAME_RE.search(case_name)
     if match is None:
         return None
@@ -2222,13 +2227,23 @@ def extract_panel_surface(
     return poly, summary
 
 # --- Output and case-level orchestration --------------------------------------
+def partial_output_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.part{path.suffix}")
+
+
 def write_surface_outputs(case_path: Path, surface: pv.PolyData):
     """Write the extracted surface both as ParaView geometry and as a flat CSV table."""
     surface_path = case_path / output_surface_name
     csv_path = case_path / output_csv_name
-    surface.save(surface_path)
+    partial_surface_path = partial_output_path(surface_path)
+    partial_csv_path = partial_output_path(csv_path)
 
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+    partial_surface_path.unlink(missing_ok=True)
+    partial_csv_path.unlink(missing_ok=True)
+
+    surface.save(partial_surface_path)
+
+    with partial_csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(
             [
@@ -2289,6 +2304,8 @@ def write_surface_outputs(case_path: Path, surface: pv.PolyData):
                 ]
             )
 
+    partial_surface_path.replace(surface_path)
+    partial_csv_path.replace(csv_path)
     return surface_path, csv_path
 
 
@@ -2424,22 +2441,6 @@ def process_case(paths: StudyPaths, case_dir: str):
     progress(f"  [time ]   total: {elapsed_seconds:.1f} s")
 
 
-def cases_from_environment(paths: StudyPaths) -> list[str]:
-    raw_cases = os.environ.get("CFD_CASES", "").strip()
-    single_case = os.environ.get("CFD_CASE", "").strip()
-    requested_cases: list[str] = []
-
-    if raw_cases:
-        requested_cases.extend(part.strip() for part in raw_cases.replace("\n", ",").split(",") if part.strip())
-    if single_case:
-        requested_cases.append(single_case)
-
-    if not requested_cases:
-        return []
-
-    return deduplicate_case_names(paths.study_root, paths.cases_dir, requested_cases)
-
-
 def main() -> int:
     env_study = os.environ.get("CFD_STUDY", "").strip()
     paths = get_study_paths(env_study) if env_study else choose_study_paths_interactively()
@@ -2448,6 +2449,7 @@ def main() -> int:
     print("║   Panel Shock Surface Extractor             ║")
     print("╚══════════════════════════════════════════════╝")
     print(f"Study: {paths.study_name}")
+    print(f"Flow file: {vtu_name}")
     print(f"Density scalar: {density_scalar}")
     dt, dn = configured_sampling_steps()
     print(

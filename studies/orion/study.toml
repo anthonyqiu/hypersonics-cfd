@@ -1,8 +1,7 @@
 # One editable matrix for the managed Orion cases.
-# Three study types are defined here:
+# Two study types are defined here:
 #   1) AoA campaign cases
 #   2) Mesh refinement study cases
-#   3) M9 symmetric-mesh refinement study cases
 #
 # Edit common values once, then use ordered override rules for subsets.
 
@@ -25,8 +24,8 @@ iter = 999999
 linear_solver_iter = 100
 linear_solver_error = "1E-6"
 mg_post_smooth = "( 0, 0, 0, 0 )"
-conv_residual_minval = -8
-conv_startiter = 0
+conv_residual_minval = -5
+conv_startiter = 250
 screen_output = "(INNER_ITER, WALL_TIME, RMS_DENSITY, RMS_MOMENTUM-X, RMS_MOMENTUM-Y, RMS_MOMENTUM-Z, RMS_ENERGY, RMS_NU_TILDE, DRAG)"
 volume_output = "MACH, PRESSURE, TEMPERATURE, DENSITY, HEAT_FLUX, Y_PLUS"
 
@@ -34,51 +33,46 @@ job_nodes = 2
 job_ntasks_per_node = 64
 job_cpus_per_task = 1
 job_mem = 0
-job_time = "18:00:00"
+job_time = "12:00:00"
 job_account = "rrg-jphickey"
 
+postprocess_job_cpus_per_task = 1
+postprocess_job_mem = ""
+mirror_job_time = "00:15:00"
+slices_job_time = "00:30:00"
+shock_job_time = "00:30:00"
+
 [meshes]
-fine = "fine.su2"
-medium = "medium.su2"
 coarse = "coarse.su2"
-fine_sym = { file = "fine_sym.su2", boundary_condition_set = "half_symmetry" }
-very_fine_sym = { file = "very_fine_sym.su2", boundary_condition_set = "half_symmetry" }
+medium = "medium.su2"
+fine = "fine.su2"
+very_fine = "very_fine.su2"
 
-[boundary_conditions.full]
-marker_heatflux = "( ORION_SURFACE, 0.0 )"
-marker_far = "( FARFIELD )"
-marker_monitoring = "( ORION_SURFACE )"
-
-[boundary_conditions.half_symmetry]
+[boundary_conditions]
 marker_heatflux = "( ORION_SURFACE, 0.0 )"
 marker_far = "( FARFIELD )"
 marker_sym = "( SYMMETRY )"
 marker_monitoring = "( ORION_SURFACE )"
 
 [generation.studies.aoa]
-mach_profiles = ["m1.5", "m3", "m6", "m9"]
+mach_profiles = ["m1p5", "m3", "m6", "m9"]
 aoas = [0, 15, 24, 32, 40, 50, 60]
-mesh_level = "fine"
+mesh_level = "very_fine"
 case_name_pattern = "m{mach}_aoa{aoa}"
 
 [generation.studies.refinement]
-mach_profiles = ["m1.5", "m3", "m6", "m9"]
+mach_profiles = ["m1p5", "m3", "m6", "m9"]
 aoa = 0
-mesh_levels = ["coarse", "medium", "fine"]
-case_name_pattern = "m{mach}_{mesh_level}"
-
-[generation.studies.m9_sym_refinement]
-mach_profiles = ["m9"]
-aoa = 0
-mesh_levels = ["fine_sym", "very_fine_sym"]
+mesh_levels = ["coarse", "medium", "fine", "very_fine"]
 case_name_pattern = "m{mach}_{mesh_level}"
 
 [aliases]
-m3_fine = "m3_aoa0"
-m6_fine = "m6_aoa0"
-m9_fine = "m9_aoa0"
+m1p5_very_fine = "m1p5_aoa0"
+m3_very_fine = "m3_aoa0"
+m6_very_fine = "m6_aoa0"
+m9_very_fine = "m9_aoa0"
 
-[profiles.m1.5]
+[profiles.m1p5]
 mach_number = "1.5"
 reynolds_number = "1.715571333404706E08"
 cfl_adapt = true
@@ -98,30 +92,26 @@ reynolds_number = "6.862285333618822E08"
 cfl_adapt = true
 cfl_number = "0.03"
 cfl_adapt_param = "(0.5, 1.1, 0.05, 0.5)"
-conv_residual_minval = -5
 
 [profiles.m9]
-mesh_level = "fine_sym"
 mach_number = "9"
 reynolds_number = "1.029342800042823E09"
 cfl_adapt = false
 cfl_number = "0.001"
 cfl_adapt_param = "(0.5, 1.1, 0.01, 0.05)"
-conv_residual_minval = -6
-conv_startiter = 250
+
 # Override rules are applied in order, top to bottom.
 # You can override any key already used by the templates.
 # Match on any combination of:
 #   match_cases      = ["m6_aoa40", "m6_aoa50"]
 #   match_study      = ["aoa", "refinement"]
 #   match_mach       = ["6", "9"]
-#   match_mesh_level = ["coarse", "medium", "fine", "fine_sym", "very_fine_sym"]
+#   match_mesh_level = ["coarse", "medium", "fine", "very_fine"]
 #   match_aoa        = [40, 50, 60]
 #   match_aoa_min    = 40
 #   match_aoa_max    = 60
-# Boundary conditions can vary by selecting a named set:
-#   boundary_condition_set = "half_symmetry"
-# or by overriding/adding individual marker keys:
+# Boundary conditions are symmetric by default. Override individual marker keys only if
+# the symmetric mesh labels change:
 #   marker_sym = "( SYMMETRY )"
 #
 # Example: restart a subset of cases.
@@ -145,41 +135,76 @@ conv_startiter = 250
 # name = "m3 refinment restart"
 # match_study = ["refinement"]
 # match_mach = ["3"]
-# match_mesh_level = ["coarse", "medium", "fine"]
+# match_mesh_level = ["coarse", "medium", "fine", "very_fine"]
 # restart_sol = true
 
 [[overrides]]
-name = "m3 refinement restart"
-match_study = ["refinement"]
-match_mach = ["3"]
+name = "m9 completed runs restart"
+match_cases = ["m9_fine", "m9_aoa0"]
 restart_sol = true
 
 [[overrides]]
-name = "m3 aoa restart"
-match_study = ["aoa"]
-match_mach = ["3"]
-match_aoa = [0]
-restart_sol = true
+name = "coarse mesh walltime"
+match_mesh_level = ["coarse"]
+job_time = "04:00:00"
+mirror_job_time = "00:15:00"
+slices_job_time = "00:15:00"
+shock_job_time = "00:15:00"
 
 [[overrides]]
-name = "m6 aoa restart"
-match_study = ["aoa"]
-match_mach = ["6"]
-match_aoa = [0, 15, 24, 32, 40, 50, 60]
-restart_sol = true
+name = "medium mesh walltime"
+match_mesh_level = ["medium"]
+job_time = "08:00:00"
+mirror_job_time = "00:15:00"
+slices_job_time = "00:30:00"
+shock_job_time = "00:30:00"
 
 [[overrides]]
-name = "m6 refinement restart"
-match_study = ["refinement"]
-match_mach = ["6"]
-restart_sol = true
+name = "fine mesh walltime"
+match_mesh_level = ["fine"]
+job_time = "12:00:00"
+mirror_job_time = "00:15:00"
+slices_job_time = "01:00:00"
+shock_job_time = "01:00:00"
+
+[[overrides]]
+name = "very fine mesh walltime"
+match_mesh_level = ["very_fine"]
+job_time = "16:00:00"
+mirror_job_time = "00:20:00"
+slices_job_time = "02:00:00"
+shock_job_time = "02:00:00"
+
+[[overrides]]
+name = "m1p5 coarse solver walltime"
+match_mach = ["1p5"]
+match_mesh_level = ["coarse"]
+job_time = "01:00:00"
+
+[[overrides]]
+name = "m1p5 medium solver walltime"
+match_mach = ["1p5"]
+match_mesh_level = ["medium"]
+job_time = "01:30:00"
+
+[[overrides]]
+name = "m1p5 fine solver walltime"
+match_mach = ["1p5"]
+match_mesh_level = ["fine"]
+job_time = "03:00:00"
+
+[[overrides]]
+name = "m1p5 very fine solver walltime"
+match_mach = ["1p5"]
+match_mesh_level = ["very_fine"]
+job_time = "08:00:00"
 
 # REFINEMENT OVERIDES
 # [[overrides]]
-# name = "m9 coarse"
+# name = "m9 medium"
 # match_study = ["refinement"]
 # match_mach = ["9"]
-# match_mesh_level = ["coarse", "medium"]
+# match_mesh_level = ["medium"]
 # cfl_number = "0.0005"
 # cfl_adapt_param = "(0.2, 1.05, 0.0005, 0.005)"
 
@@ -187,5 +212,5 @@ restart_sol = true
 # name = "test"
 # match_study = ["refinement"]
 # match_mach = ["3"]
-# match_mesh_level = ["coarse"]
+# match_mesh_level = ["medium"]
 # job_time = "00:15:00"

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 
 CASE_NAME_RE = re.compile(
-    r"^(m\d+(?:\.\d+)?)(?:_aoa\d+(?:p\d+)?(?:_[A-Za-z0-9][A-Za-z0-9_.-]*)?|_[A-Za-z0-9][A-Za-z0-9_.-]*)$"
+    r"^(m\d+(?:(?:\.|p)\d+)?)(?:_aoa\d+(?:p\d+)?(?:_[A-Za-z0-9][A-Za-z0-9_.-]*)?|_[A-Za-z0-9][A-Za-z0-9_.-]*)$"
 )
-REFINEMENT_SUFFIXES = ("_coarse", "_medium", "_fine", "_fine_sym", "_very_fine_sym")
+REFINEMENT_SUFFIXES = ("_coarse", "_medium", "_fine", "_very_fine")
 MESH_LEVEL_ORDER = {
     "coarse": 0,
     "medium": 1,
     "fine": 2,
-    "fine_sym": 3,
-    "very_fine_sym": 4,
+    "very_fine": 3,
 }
 
 
@@ -26,8 +26,12 @@ def format_aoa_token(value: Any) -> str:
     return str(as_float).replace(".", "p")
 
 
+def normalize_mach_token(value: Any) -> str:
+    return str(value).strip().removeprefix("m").replace(".", "p")
+
+
 def normalize_mach_tokens(values: list[str]) -> set[str]:
-    return {str(value).strip().removeprefix("m") for value in values}
+    return {normalize_mach_token(value) for value in values}
 
 
 def normalize_strings(values: list[str]) -> set[str]:
@@ -91,7 +95,7 @@ def prompt_with_default(prompt: str, default: str) -> str:
 
 def mach_sort_key(mach_label: str) -> float:
     try:
-        return float(mach_label.removeprefix("m"))
+        return float(normalize_mach_token(mach_label).replace("p", "."))
     except ValueError:
         return float("inf")
 
@@ -231,6 +235,26 @@ def deduplicate_case_names(root: Path, cases_dir: Path, case_names: list[str]) -
         seen_realpaths.add(real_path)
         deduped.append(case_name)
     return deduped
+
+
+def cases_from_environment(paths: Any) -> list[str]:
+    raw_cases = os.environ.get("CFD_CASES", "").strip()
+    single_case = os.environ.get("CFD_CASE", "").strip()
+    requested_cases: list[str] = []
+
+    if raw_cases:
+        requested_cases.extend(
+            part.strip()
+            for part in raw_cases.replace("\n", ",").split(",")
+            if part.strip()
+        )
+    if single_case:
+        requested_cases.append(single_case)
+
+    if not requested_cases:
+        return []
+
+    return deduplicate_case_names(paths.study_root, paths.cases_dir, requested_cases)
 
 
 def discover_postprocess_cases(cases_dir: Path, required_filename: str) -> tuple[list[str], dict[str, list[str]]]:

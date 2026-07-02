@@ -11,17 +11,18 @@ from typing import Any
 from case_selection import (
     choose_managed_case_specs_interactively,
     format_aoa_token,
+    normalize_mach_token,
     prompt_yes_no,
 )
 from layout import StudyPaths, choose_study_paths_interactively
 
 
 PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z0-9_]+)\s*}}")
-OLD_CASE_LOCAL_LINKS = ("mesh.su2", "fine.su2", "medium.su2", "coarse.su2")
-DEFAULT_BOUNDARY_CONDITION_SET = "full"
+CASE_LOCAL_MESH_LINKS = ("mesh.su2", "coarse.su2", "medium.su2", "fine.su2", "very_fine.su2")
 DEFAULT_BOUNDARY_CONDITIONS = {
     "marker_heatflux": "( ORION_SURFACE, 0.0 )",
     "marker_far": "( FARFIELD )",
+    "marker_sym": "( SYMMETRY )",
     "marker_monitoring": "( ORION_SURFACE )",
 }
 MARKER_COMMENTS = {
@@ -41,7 +42,7 @@ def load_case_setup(paths: StudyPaths) -> tuple[dict[str, Any], str, list[dict[s
     matrix = load_toml(paths.study_file)
     template_text = paths.su2_template.read_text(encoding="utf-8")
     case_specs = expand_cases(paths, matrix)
-    case_specs = apply_alias_map(case_specs, matrix, template_text)
+    apply_aliases(case_specs, matrix)
     return matrix, template_text, case_specs
 
 
@@ -81,39 +82,10 @@ def render_template(template_text: str, context: dict[str, Any]) -> str:
     return rendered
 
 
-def template_placeholder_keys(template_text: str) -> list[str]:
-    return sorted({match.group(1) for match in PLACEHOLDER_RE.finditer(template_text)})
-
-
-def alias_diff_keys(alias_spec: dict[str, Any], target_spec: dict[str, Any], template_text: str) -> list[str]:
-    differing: list[str] = []
-    for key in template_placeholder_keys(template_text):
-        if str(alias_spec.get(key, "")) != str(target_spec.get(key, "")):
-            differing.append(key)
-    return differing
-
-
-def describe_alias(spec: dict[str, Any]) -> str:
-    alias_of = str(spec.get("alias_of", ""))
-    if not alias_of:
-        return ""
-    diff_keys = list(spec.get("alias_diff_keys", []))
-    if not diff_keys:
-        return alias_of
-    shown = ",".join(diff_keys[:4])
-    if len(diff_keys) > 4:
-        shown += ",..."
-    return f"{alias_of} [target config wins: {shown}]"
-
-
-def apply_alias_map(
-    case_specs: list[dict[str, Any]],
-    matrix: dict[str, Any],
-    template_text: str,
-) -> list[dict[str, Any]]:
+def apply_aliases(case_specs: list[dict[str, Any]], matrix: dict[str, Any]) -> None:
     aliases = {str(name): str(target) for name, target in dict(matrix.get("aliases", {})).items()}
     if not aliases:
-        return case_specs
+        return
 
     spec_by_name = {str(spec["case_name"]): spec for spec in case_specs}
     for alias_name, target_name in aliases.items():
@@ -123,13 +95,7 @@ def apply_alias_map(
             raise ValueError(f"alias target {target_name!r} was not generated")
         if alias_name == target_name:
             raise ValueError(f"alias {alias_name!r} cannot target itself")
-
-        alias_spec = spec_by_name[alias_name]
-        target_spec = spec_by_name[target_name]
-        alias_spec["alias_of"] = target_name
-        alias_spec["alias_diff_keys"] = alias_diff_keys(alias_spec, target_spec, template_text)
-
-    return case_specs
+        spec_by_name[alias_name]["alias_of"] = target_name
 
 
 def format_yes_no(value: Any) -> str:
@@ -151,7 +117,9 @@ def matches_override(rule: dict[str, Any], spec: dict[str, Any]) -> bool:
         return False
 
     match_mach = rule.get("match_mach")
-    if match_mach and spec["mach_token"] not in {str(value).removeprefix("m") for value in match_mach}:
+    if match_mach and normalize_mach_token(spec["mach_token"]) not in {
+        normalize_mach_token(value) for value in match_mach
+    }:
         return False
 
     match_mesh_level = rule.get("match_mesh_level")
@@ -187,7 +155,7 @@ def apply_override_rules(base_spec: dict[str, Any], override_rules: list[dict[st
     return merged
 
 
-def mesh_file_and_attributes(meshes: dict[str, Any], mesh_level: str) -> tuple[str, dict[str, Any]]:
+def mesh_file(meshes: dict[str, Any], mesh_level: str) -> str:
     if mesh_level not in meshes:
         available = ", ".join(sorted(meshes))
         raise KeyError(
@@ -195,27 +163,11 @@ def mesh_file_and_attributes(meshes: dict[str, Any], mesh_level: str) -> tuple[s
         )
 
     mesh_definition = meshes[mesh_level]
-    if not isinstance(mesh_definition, dict):
-        return str(mesh_definition), {}
-
-    file_value = (
-        mesh_definition.get("file")
-        or mesh_definition.get("filename")
-        or mesh_definition.get("path")
-    )
-    if not file_value:
-        raise KeyError(
-            f"mesh level {mesh_level!r} uses a table definition but has no file/filename/path value"
+    if isinstance(mesh_definition, dict):
+        raise TypeError(
+            f"mesh level {mesh_level!r} must be a mesh filename string, not a table"
         )
-
-    attributes = {
-        str(key): value
-        for key, value in mesh_definition.items()
-        if key not in {"file", "filename", "path"}
-    }
-    if "bc_set" in attributes and "boundary_condition_set" not in attributes:
-        attributes["boundary_condition_set"] = attributes.pop("bc_set")
-    return str(file_value), attributes
+    return str(mesh_definition)
 
 
 def resolve_mesh_reference(paths: StudyPaths, mesh_value: str) -> str:
@@ -247,15 +199,6 @@ def marker_config_key(key: str) -> str:
     return f"MARKER_{marker_key.removeprefix('marker_').upper()}"
 
 
-def set_marker_entry(entries: dict[str, Any], key: str, value: Any) -> None:
-    config_key = marker_config_key(key)
-    for existing_key in list(entries):
-        if marker_config_key(existing_key) == config_key:
-            entries[existing_key] = value
-            return
-    entries[key] = value
-
-
 def format_su2_value(value: Any) -> str:
     if isinstance(value, bool):
         return format_yes_no(value)
@@ -272,36 +215,26 @@ def raw_lines_from_value(value: Any) -> list[str]:
     return [str(line).strip() for line in value if str(line).strip()]
 
 
-def boundary_condition_sets(matrix: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def boundary_condition_entries(matrix: dict[str, Any]) -> dict[str, Any]:
     configured = matrix.get("boundary_conditions")
     if configured is None:
-        return {DEFAULT_BOUNDARY_CONDITION_SET: dict(DEFAULT_BOUNDARY_CONDITIONS)}
-    return {
-        str(name): dict(values)
-        for name, values in dict(configured).items()
-    }
+        return dict(DEFAULT_BOUNDARY_CONDITIONS)
 
-
-def render_boundary_condition_block(matrix: dict[str, Any], spec: dict[str, Any]) -> str:
-    set_name = str(spec.get("boundary_condition_set", DEFAULT_BOUNDARY_CONDITION_SET))
-    sets = boundary_condition_sets(matrix)
-    if set_name not in sets:
-        available = ", ".join(sorted(sets))
-        raise KeyError(
-            f"unknown boundary condition set {set_name!r}. Available sets: {available}"
+    entries = dict(configured)
+    nested_keys = sorted(str(key) for key, value in entries.items() if isinstance(value, dict))
+    if nested_keys:
+        raise TypeError(
+            "named boundary-condition sets are obsolete. Use one flat "
+            f"[boundary_conditions] table instead; nested keys found: {', '.join(nested_keys)}"
         )
+    return entries
 
-    entries = dict(sets[set_name])
+
+def render_boundary_condition_block(matrix: dict[str, Any]) -> str:
+    entries = boundary_condition_entries(matrix)
     raw_lines: list[str] = []
     for raw_key in ("lines", "raw_lines"):
         raw_lines.extend(raw_lines_from_value(entries.pop(raw_key, None)))
-
-    for key, value in spec.items():
-        key_text = str(key)
-        if key_text.lower().startswith("marker_") or key_text.upper().startswith("MARKER_"):
-            set_marker_entry(entries, key_text, value)
-
-    raw_lines.extend(raw_lines_from_value(spec.get("boundary_condition_lines")))
 
     lines: list[str] = []
     for key, value in entries.items():
@@ -329,7 +262,7 @@ def render_boundary_condition_block(matrix: dict[str, Any], spec: dict[str, Any]
 
 
 def case_runtime_value(case_dir: Path, stem: str) -> str:
-    return str((case_dir / stem).resolve(strict=False))
+    return stem
 
 
 def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, Any]]:
@@ -354,7 +287,7 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                     f"unknown Mach profile {profile_name!r}. Available profiles: {available}"
                 )
             profile = dict(profiles[profile_name])
-            mach_token = profile_name.removeprefix("m")
+            mach_token = normalize_mach_token(profile_name)
 
             for aoa in aoa_values:
                 aoa_token = format_aoa_token(aoa)
@@ -376,16 +309,11 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                         study=study_name,
                     )
                     spec = apply_override_rules(spec, override_rules)
-                    mesh_value, mesh_attributes = mesh_file_and_attributes(
-                        meshes,
-                        str(spec["mesh_level"]),
-                    )
-                    for key, value in mesh_attributes.items():
-                        spec.setdefault(key, value)
+                    mesh_value = mesh_file(meshes, str(spec["mesh_level"]))
                     spec["mesh_filename"] = resolve_mesh_reference(paths, mesh_value)
 
                     case_dir = paths.case_path(str(spec["case_name"]))
-                    spec["solution_filename"] = str((case_dir / "restart_flow.dat").resolve(strict=False))
+                    spec["solution_filename"] = "restart_flow.dat"
                     spec["solution_adj_filename"] = case_runtime_value(case_dir, "solution_adj")
                     spec["conv_filename"] = case_runtime_value(case_dir, "history")
                     spec["restart_filename"] = case_runtime_value(case_dir, "restart_flow")
@@ -411,7 +339,7 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                     spec["volume_output_block"] = (
                         f"VOLUME_OUTPUT= {volume_output}" if volume_output else ""
                     )
-                    spec["boundary_condition_block"] = render_boundary_condition_block(matrix, spec)
+                    spec["boundary_condition_block"] = render_boundary_condition_block(matrix)
 
                     if spec["case_name"] in seen_case_names:
                         raise ValueError(f"duplicate generated case name: {spec['case_name']}")
@@ -486,13 +414,12 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
             "run_cleanup": "alias-skip",
             "removed_links": "alias-skip",
             "alias_of": alias_of,
-            "alias_note": describe_alias(spec),
         }
 
     case_dir_status = "kept"
     if case_dir.is_symlink():
         case_dir.unlink()
-        case_dir_status = "replaced-alias"
+        case_dir_status = "replaced-symlink"
     case_dir.mkdir(parents=True, exist_ok=True)
 
     config_text = render_template(template_text, spec) + "\n"
@@ -503,7 +430,7 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
     run_cleanup = remove_if_exists(case_dir / "run.sh")
 
     removed_links: list[str] = []
-    for name in OLD_CASE_LOCAL_LINKS:
+    for name in CASE_LOCAL_MESH_LINKS:
         path = case_dir / name
         if path.is_symlink():
             try:
@@ -520,14 +447,13 @@ def stage_case(paths: StudyPaths, spec: dict[str, Any], template_text: str) -> d
         "config_cleanup": config_cleanup,
         "run_cleanup": run_cleanup,
         "removed_links": ",".join(removed_links) if removed_links else "none",
-        "alias_of": alias_of,
-        "alias_note": describe_alias(spec),
+        "alias_of": "",
     }
 
 
 def preview_case(spec: dict[str, Any]) -> str:
-    alias_label = describe_alias(spec)
-    alias_suffix = f", alias_of={alias_label}" if alias_label else ""
+    alias_of = str(spec.get("alias_of", ""))
+    alias_suffix = f", alias_of={alias_of}" if alias_of else ""
     return (
         f"{spec['case_name']}: study={spec['study']}, mach={spec['mach_number']}, aoa={spec['aoa']}, "
         f"mesh={spec['mesh_level']}, restart={spec['restart_sol']}, cfl={spec['cfl_number']}{alias_suffix}"
@@ -555,7 +481,7 @@ def main() -> int:
     print()
     for spec in case_specs:
         result = stage_case(paths, spec, template_text)
-        alias_suffix = f", alias_of={result['alias_note']}" if result["alias_note"] else ""
+        alias_suffix = f", alias_of={result['alias_of']}" if result["alias_of"] else ""
         print(
             f"{result['case_name']}: case_dir={result['case_dir']}, generated={result['generated']}, "
             f"config_cleanup={result['config_cleanup']}, run_cleanup={result['run_cleanup']}, "

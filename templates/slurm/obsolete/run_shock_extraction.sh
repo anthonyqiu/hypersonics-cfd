@@ -6,7 +6,7 @@ second_arg="${2:-}"
 third_arg="${3:-}"
 
 if [[ -z "$python_exe" || -z "$second_arg" ]]; then
-    echo "Usage: $0 <python-executable> [<extract-script>] <case-manifest>" >&2
+    echo "Usage: $0 <python-executable> [<extract-script>] <case-manifest> [flow-file]" >&2
     exit 2
 fi
 
@@ -22,6 +22,8 @@ else
     manifest_path="$second_arg"
     shift 2 || true
 fi
+
+flow_file="${1:-${CFD_FLOW_FILE:-flow_full.vtu}}"
 
 if [[ ! -f "$manifest_path" ]]; then
     echo "Case manifest not found: $manifest_path" >&2
@@ -48,6 +50,7 @@ echo "CPUs/task:  ${SLURM_CPUS_PER_TASK:-local}"
 echo "Python:     $python_exe"
 echo "Manifest:   $manifest_path"
 echo "Study:      $study_name"
+echo "Flow file:  $flow_file"
 
 cd "$root_dir"
 
@@ -65,7 +68,7 @@ while IFS= read -r case_path || [[ -n "$case_path" ]]; do
     case_count=$((case_count + 1))
     echo
     echo "=== Extracting $case_path ==="
-    CFD_STUDY="$study_name" CFD_CASE="$case_path" "$python_exe" "$extract_script"
+    CFD_STUDY="$study_name" CFD_CASE="$case_path" CFD_FLOW_FILE="$flow_file" "$python_exe" "$extract_script"
 done < "$manifest_path"
 
 echo

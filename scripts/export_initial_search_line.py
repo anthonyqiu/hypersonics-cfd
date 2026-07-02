@@ -9,7 +9,12 @@ from typing import Any
 import numpy as np
 import pyvista as pv
 
-from case_selection import choose_postprocess_cases_interactively, deduplicate_case_names, resolve_case_path
+from case_selection import (
+    cases_from_environment,
+    choose_postprocess_cases_interactively,
+    deduplicate_case_names,
+    resolve_case_path,
+)
 from extract_shock_surface import (
     autoscaled_savgol_window_points,
     build_stagnation_search_diagnostics,
@@ -31,22 +36,6 @@ from layout import StudyPaths, choose_study_paths_interactively, get_study_paths
 
 
 OUTPUT_FILENAME = "initial_search_line_profile.csv"
-
-
-def cases_from_environment(paths: StudyPaths) -> list[str]:
-    raw_cases = os.environ.get("CFD_CASES", "").strip()
-    single_case = os.environ.get("CFD_CASE", "").strip()
-    requested_cases: list[str] = []
-
-    if raw_cases:
-        requested_cases.extend(part.strip() for part in raw_cases.replace("\n", ",").split(",") if part.strip())
-    if single_case:
-        requested_cases.append(single_case)
-
-    if not requested_cases:
-        return []
-
-    return deduplicate_case_names(paths.study_root, paths.cases_dir, requested_cases)
 
 
 def line_sample_spacing(line_coordinates: np.ndarray, default_spacing: float) -> float:
@@ -251,6 +240,7 @@ def main() -> int:
     print("║   Initial Search-Line Diagnostic Export     ║")
     print("╚══════════════════════════════════════════════╝")
     print(f"Study: {paths.study_name}")
+    print(f"Flow file: {vtu_name}")
     print(f"Output file: {OUTPUT_FILENAME}")
 
     cases = cases_from_environment(paths)

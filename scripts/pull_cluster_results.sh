@@ -43,10 +43,6 @@ declare -a SURFACE_FILES=(
     "shock_surface.vtp"
 )
 
-declare -a DIAGNOSTIC_FILES=(
-    "initial_search_line_profile.csv"
-)
-
 declare -a SEARCH_LINE_DIAGNOSTIC_FILES=(
     "initial_search_line_profile.csv"
     "terminated_search_line_summary.csv"
@@ -58,6 +54,10 @@ declare -a FLOW_SLICE_FILES=(
     "flow_slice_xz.vtp"
 )
 
+declare -a TIMING_FILES=(
+    "logs/workflow_timings.csv"
+)
+
 declare -a TERMINATED_SEARCH_LINE_FILES=(
     "terminated_search_line_summary.csv"
     "terminated_search_line_profiles.csv"
@@ -66,24 +66,19 @@ declare -a TERMINATED_SEARCH_LINE_FILES=(
 declare -a LIGHTWEIGHT_FILES=(
     "history.csv"
     "surface_flow.vtu"
-    "shock.csv"
-    "shock_gradient.csv"
-    "shock_pressure.csv"
     "${SURFACE_FILES[@]}"
-    "${SEARCH_LINE_DIAGNOSTIC_FILES[@]}"
     "${FLOW_SLICE_FILES[@]}"
+    "${TIMING_FILES[@]}"
 )
 
 declare -a PRIMARY_FILES=(
     "history.csv"
     "flow.vtu"
+    "flow_full.vtu"
     "surface_flow.vtu"
-    "shock.csv"
-    "shock_gradient.csv"
-    "shock_pressure.csv"
     "${SURFACE_FILES[@]}"
-    "${SEARCH_LINE_DIAGNOSTIC_FILES[@]}"
     "${FLOW_SLICE_FILES[@]}"
+    "${TIMING_FILES[@]}"
 )
 
 declare -a REMOTE_CASE_CANDIDATES=(
@@ -144,6 +139,7 @@ resolve_cluster_cases_dir() {
     for candidate in "${candidates[@]}"; do
         remote_script+=" $(printf '%q' "$candidate")"
     done
+    # shellcheck disable=SC2016 # $d must expand inside the remote bash script.
     remote_script+='; do if [ -d "$d" ]; then printf "%s\n" "$d"; exit 0; fi; done; exit 1'
 
     if ! REMOTE_CASES_DIR="$(run_remote_bash "$remote_script")"; then
@@ -166,15 +162,16 @@ print_file_menu() {
     echo -e "${BOLD}Select file type(s) to collect:${RESET}"
     echo ""
     echo -e "  ${YELLOW}1)${RESET} history.csv only"
-    echo -e "  ${YELLOW}2)${RESET} flow.vtu only"
+    echo -e "  ${YELLOW}2)${RESET} flow_full.vtu only"
     echo -e "  ${YELLOW}3)${RESET} shock surface files (.csv + .vtp)"
     echo -e "  ${YELLOW}4)${RESET} history.csv + shock surface files"
-    echo -e "  ${YELLOW}5)${RESET} history.csv + flow.vtu"
+    echo -e "  ${YELLOW}5)${RESET} history.csv + flow_full.vtu"
     echo -e "  ${YELLOW}6)${RESET} All primary files"
     echo -e "  ${YELLOW}7)${RESET} All lightweight post-processing files"
     echo -e "  ${YELLOW}8)${RESET} all search-line diagnostics (initial + terminated)"
     echo -e "  ${YELLOW}9)${RESET} pre-sliced flow fields (xy + xz)"
     echo -e "  ${YELLOW}10)${RESET} terminated search-line diagnostics only"
+    echo -e "  ${YELLOW}11)${RESET} per-case workflow timing logs"
     echo ""
 }
 
@@ -182,15 +179,16 @@ set_files_to_pull() {
     FILES_TO_PULL=()
     case "$1" in
         1) FILES_TO_PULL=("history.csv") ;;
-        2) FILES_TO_PULL=("flow.vtu") ;;
+        2) FILES_TO_PULL=("flow_full.vtu") ;;
         3) FILES_TO_PULL=("${SURFACE_FILES[@]}") ;;
         4) FILES_TO_PULL=("history.csv" "${SURFACE_FILES[@]}") ;;
-        5) FILES_TO_PULL=("history.csv" "flow.vtu") ;;
+        5) FILES_TO_PULL=("history.csv" "flow_full.vtu") ;;
         6) FILES_TO_PULL=("${PRIMARY_FILES[@]}") ;;
         7) FILES_TO_PULL=("${LIGHTWEIGHT_FILES[@]}") ;;
         8) FILES_TO_PULL=("${SEARCH_LINE_DIAGNOSTIC_FILES[@]}") ;;
         9) FILES_TO_PULL=("${FLOW_SLICE_FILES[@]}") ;;
         10) FILES_TO_PULL=("${TERMINATED_SEARCH_LINE_FILES[@]}") ;;
+        11) FILES_TO_PULL=("${TIMING_FILES[@]}") ;;
         *) die "Invalid choice." ;;
     esac
 }
@@ -206,7 +204,7 @@ list_remote_cases() {
 
 case_mach_prefix() {
     local case_name="$1"
-    if [[ "${case_name}" =~ ^(m[0-9]+(\.[0-9]+)?)_ ]]; then
+    if [[ "${case_name}" =~ ^(m[0-9]+((\.|p)[0-9]+)?)_ ]]; then
         printf '%s\n' "${BASH_REMATCH[1]}"
         return 0
     fi
@@ -218,7 +216,7 @@ is_aoa_case() {
 }
 
 is_refinement_case() {
-    [[ "$1" =~ _(coarse|medium|fine|fine_sym|very_fine_sym)$ ]]
+    [[ "$1" =~ _(coarse|medium|fine|very_fine)$ ]]
 }
 
 copy_file() {
@@ -296,7 +294,7 @@ resolve_cluster_cases_dir
 mkdir -p "${LOCAL_CASES_DIR}"
 print_header
 print_file_menu
-read -r -p "File type [1-10]: " file_choice
+read -r -p "File type [1-11]: " file_choice
 echo ""
 set_files_to_pull "${file_choice}"
 

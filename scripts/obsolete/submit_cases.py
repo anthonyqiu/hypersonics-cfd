@@ -8,7 +8,8 @@ from pathlib import Path
 
 from case_selection import choose_managed_case_specs_interactively, prompt_yes_no
 from layout import StudyPaths, choose_study_paths_interactively
-from setup_cases import describe_alias, load_case_setup, stage_case
+from slurm_helpers import command_string, submit_sbatch
+from setup_cases import load_case_setup, stage_case
 
 
 RESULT_PATTERNS = (
@@ -72,34 +73,6 @@ def build_sbatch_command(paths: StudyPaths, spec: dict[str, object], case_dir: P
     ]
 
 
-def resolve_alias_targets(
-    selected_specs: list[dict[str, object]],
-    all_specs: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    spec_by_name = {str(spec["case_name"]): spec for spec in all_specs}
-    resolved_specs: list[dict[str, object]] = []
-    seen_targets: set[str] = set()
-
-    for spec in selected_specs:
-        selected_name = str(spec["case_name"])
-        target_name = str(spec.get("alias_of") or selected_name)
-        if target_name != selected_name:
-            alias_note = describe_alias(spec)
-            if alias_note and alias_note != target_name:
-                print(f"{selected_name}: alias of {alias_note}, using {target_name}")
-            else:
-                print(f"{selected_name}: alias of {target_name}, using {target_name}")
-
-        if target_name in seen_targets:
-            print(f"{selected_name}: skipped, target {target_name} is already covered")
-            continue
-
-        seen_targets.add(target_name)
-        resolved_specs.append(spec_by_name[target_name])
-
-    return resolved_specs
-
-
 def choose_submit_mode() -> bool:
     print("\nChoose solver submission mode:\n")
     print("  1) Dry-run (print sbatch commands only)")
@@ -142,8 +115,6 @@ def main() -> int:
         print(exc)
         return 1
 
-    case_specs = resolve_alias_targets(case_specs, all_case_specs)
-
     if submit_jobs and shutil.which("sbatch") is None:
         raise SystemExit("sbatch was not found in PATH. Use the dry-run mode instead.")
 
@@ -164,7 +135,7 @@ def main() -> int:
             continue
 
         command = build_sbatch_command(paths, spec, case_dir)
-        printable = " ".join(command)
+        printable = command_string(command)
 
         if not submit_jobs:
             print(f"[dry-run] {printable}")
@@ -174,10 +145,10 @@ def main() -> int:
         stage_case(paths, spec, template_text)
         paths.ensure_case_runtime_dirs(str(spec["case_name"]))
         try:
-            completed = subprocess.run(command, check=True, text=True, capture_output=True)
+            stdout, _ = submit_sbatch(command)
         except subprocess.CalledProcessError as exc:
             print(f"{spec['case_name']}: submission failed")
-            print(f"  command: {' '.join(command)}")
+            print(f"  command: {printable}")
             if exc.stdout.strip():
                 print(f"  stdout: {exc.stdout.strip()}")
             if exc.stderr.strip():
@@ -186,7 +157,7 @@ def main() -> int:
         except OSError as exc:
             print(f"{spec['case_name']}: failed to launch sbatch: {exc}")
             return 1
-        print(f"{spec['case_name']}: {completed.stdout.strip()}")
+        print(f"{spec['case_name']}: {stdout}")
         planned += 1
 
     print()

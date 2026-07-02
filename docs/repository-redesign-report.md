@@ -1,12 +1,16 @@
 # Repository Redesign Report
 
+Historical note: this report documents an earlier repository cleanup. The current Orion
+workflow is symmetric-only: active cases and active meshes use clean names, and obsolete case data is grouped under
+`studies/orion/data/obsolete/`.
+
 ## Objective
 
 This redesign turns the repository from a single mixed-use `orion/` working folder into a reusable campaign repo with a clear split between:
 
 - reusable workflow code
 - campaign metadata and canonical inputs
-- generated configs and manifests
+- generated configs
 - heavy CFD data and derived outputs
 
 The redesign was done on branch `repo-structure-redesign` so the previous layout remains recoverable.
@@ -21,7 +25,7 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Moved Orion geometry into `studies/orion/geometry/`.
 - Moved Orion meshes into `studies/orion/meshes/`.
 - Moved heavy case data into `studies/orion/data/`.
-- Moved generated configs and manifests into `studies/orion/build/`.
+- Moved generated configs into `studies/orion/build/`.
 - Removed the repository layout's dependence on the compatibility-only `reentry/orion` path.
 - Removed the temporary archive/backup layer so the repo only describes the active workflow and active study data layout.
 
@@ -30,12 +34,11 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 - Added a shared path model in `scripts/layout.py`.
 - Flattened the study path model so template paths now live directly on `StudyPaths` instead of under a nested `templates` object.
 - Made case generation study-aware instead of hard-coding the old `orion/` tree.
-- Preserved case aliases such as `m3_fine -> m3_aoa0` as managed symlinks.
-- Normalized mesh naming to `coarse.su2` throughout the managed workflow.
+- Normalized mesh naming throughout the managed workflow.
 - Retired the old rectangular shock extractor so the repo now supports one maintained shock-surface workflow.
 - Kept the supported shock extractor implementation directly in `scripts/extract_shock_surface.py` so it is not split across wrapper and library copies.
 - Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.
-- Made shock-batch manifests store case names instead of machine-specific absolute paths.
+- Collapsed separate shock batch submission into the combined solver/postprocess workflow.
 - Made generated SU2 configs use explicit mesh and case-output paths so solver outputs always land in `studies/<campaign>/data/cases/<case>/` even though configs are stored under `build/`.
 
 ## Current folder map
@@ -49,21 +52,19 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ### `studies/orion/`
 
-- `study.toml`: campaign defaults, profiles, aliases, and overrides.
+- `study.toml`: campaign defaults, profiles, and overrides.
 - `geometry/`: canonical CAD/profile inputs.
 - `meshes/`: Orion meshes used by generated configs.
 - `analysis/`: helper scripts, plotting assets, and small study notes that support interpretation but not production runs.
 - `build/generated-configs/`: rendered SU2 configs for each managed case.
-- `build/manifests/`: generated batch manifests.
 - `data/cases/`: heavy per-case solver outputs and derived artifacts.
 
 ## Script inventory
 
 ### Active tools in `scripts/`
 
-- `setup_cases.py`: renders managed SU2 configs and maintains case aliases and cleanup.
-- `submit_cases.py`: builds or submits SLURM jobs for solver runs.
-- `submit_shock_extraction.py`: builds or submits SLURM jobs for the panel shock extractor.
+- `setup_cases.py`: renders managed SU2 configs and removes stale local per-case files.
+- `submit_workflow.py`: builds or submits solver plus dependent mirror, slice, and shock SLURM jobs.
 - `extract_shock_surface.py`: runs the supported panel-based 3D shock-surface extractor.
 - `export_initial_search_line.py`: exports the coarse/refined stagnation search-line profile used to debug shock-sensor smoothing and peak picking.
 - `export_flow_slices.py`: writes ParaView-ready `xy` and `xz` flow slices so local machines can inspect lighter files instead of opening full 3D fields.
@@ -148,23 +149,15 @@ These sources support the core design decision used here: keep the repo as the w
 
 ## Verification performed
 
-- Compiled the consolidated Python workflow with `python3 -m compileall scripts`.
-- Verified the interactive workflow for:
-  - `scripts/setup_cases.py`
-  - `scripts/submit_cases.py`
-  - `scripts/submit_shock_extraction.py`
-  - `scripts/extract_shock_surface.py`
-  - `scripts/check_convergence.py`
-- Ran `scripts/setup_cases.py` interactively to stage `m3_coarse` and `m3_fine`.
-- Confirmed generated configs now point to `../../meshes/coarse.su2`.
-- Confirmed generated configs now point to explicit mesh and case-output paths.
-- Confirmed alias preservation for `m3_fine -> m3_aoa0`.
-- Dry-ran `scripts/submit_cases.py` interactively.
-- Dry-ran `scripts/submit_shock_extraction.py` interactively.
-- Ran `scripts/check_convergence.py` interactively.
-- Ran `scripts/extract_shock_surface.py` on `m3_coarse`.
-- Checked `templates/slurm/run_shock_extraction.sh` and `templates/slurm/run_su2_case.sh` usage output.
-- Verified `scripts/pull_cluster_results.sh` with `bash -n`; a live `ssh/scp` session was not exercised here because host-trust setup is local-machine specific.
+- Compiled the active and obsolete Python scripts with `python3 -m py_compile`.
+- Checked active and obsolete SLURM/shell scripts with `bash -n`.
+- Ran ShellCheck on the active shell scripts.
+- Loaded the Orion study matrix in Python and verified the managed case set, mesh names, symmetric boundary marker, and M9 convergence settings.
+- Previewed and staged the managed Orion matrix with the very-fine AoA sweep convention.
+- Dry-ran `scripts/submit_workflow.py` for the managed matrix; it planned real solver/postprocess-chain jobs and skipped alias cases.
+- Ran a MATLAB smoke test for `studies/orion/analysis/orion_case_helpers.m`.
+- Ran `scripts/check_convergence.py` against the current M9 refinement histories at a loose smoke-test threshold.
+- Verified `scripts/pull_cluster_results.sh` with local syntax and ShellCheck checks; a live `ssh/scp` session was not exercised here because host-trust setup is local-machine specific.
 
 ## Follow-on recommendations
 

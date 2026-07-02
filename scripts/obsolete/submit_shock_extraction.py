@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -16,9 +17,10 @@ from case_selection import (
     resolve_case_path,
 )
 from layout import choose_study_paths_interactively
+from slurm_helpers import command_string, submit_sbatch
 
 
-FLOW_FILENAME = "flow.vtu"
+DEFAULT_FLOW_FILENAME = os.environ.get("CFD_FLOW_FILE", "flow_full.vtu").strip() or "flow_full.vtu"
 SHOCK_OUTPUTS = ("shock_surface.vtp", "shock_surface.csv")
 DEFAULT_CPUS_PER_TASK = 32
 DEFAULT_MEM = ""
@@ -79,6 +81,7 @@ def build_sbatch_command(
     time_limit: str,
     account: str,
     python_executable: str,
+    flow_filename: str,
 ) -> list[str]:
     command = [
         "sbatch",
@@ -106,6 +109,7 @@ def build_sbatch_command(
         str(python_executable),
         str(extract_script),
         str(manifest_path),
+        str(flow_filename),
     ]
     if str(mem).strip():
         command[command.index("--time"):command.index("--time")] = ["--mem", str(mem)]
@@ -164,6 +168,7 @@ def main() -> int:
     paths = choose_study_paths_interactively()
     default_account, default_time = load_submit_defaults(paths.study_file)
     submit_jobs = choose_submit_mode()
+    flow_filename = prompt_with_default("Flow file to process", DEFAULT_FLOW_FILENAME)
     rerun_existing = prompt_yes_no(
         "Allow cases that already have shock_surface outputs to be included again?",
         default=False,
@@ -186,13 +191,14 @@ def main() -> int:
     print(f"Run script: {paths.run_shock_extraction_script}")
     print(f"Extractor: {extract_script}")
     print(f"Python: {python_executable}")
+    print(f"Flow file: {flow_filename}")
     print(
         f"Resources: nodes=1, ntasks-per-node=1, cpus-per-task={cpus_per_task}, "
         f"mem={mem or 'not requested'}, "
         f"time={time_limit}, account={account}"
     )
 
-    cases = choose_postprocess_cases_interactively(paths.cases_dir, FLOW_FILENAME)
+    cases = choose_postprocess_cases_interactively(paths.cases_dir, flow_filename)
     cases = deduplicate_case_names(paths.study_root, paths.cases_dir, cases)
     if not cases:
         return 0
@@ -201,9 +207,9 @@ def main() -> int:
     skipped = 0
     for case in cases:
         case_path = resolve_case_path(paths.study_root, paths.cases_dir, case)
-        flow_path = case_path / FLOW_FILENAME
+        flow_path = case_path / flow_filename
         if not flow_path.exists():
-            print(f"{case}: skipped, missing {FLOW_FILENAME}")
+            print(f"{case}: skipped, missing {flow_filename}")
             skipped += 1
             continue
 
@@ -233,8 +239,9 @@ def main() -> int:
         time_limit=time_limit,
         account=account,
         python_executable=python_executable,
+        flow_filename=flow_filename,
     )
-    printable = " ".join(command)
+    printable = command_string(command)
 
     if not submit_jobs:
         print(f"[dry-run] {printable}")
@@ -246,10 +253,10 @@ def main() -> int:
 
     write_case_manifest(manifest_path, runnable_case_names)
     try:
-        completed = subprocess.run(command, check=True, text=True, capture_output=True)
+        stdout, _ = submit_sbatch(command)
     except subprocess.CalledProcessError as exc:
         print("shock batch submission failed")
-        print(f"  command: {' '.join(command)}")
+        print(f"  command: {printable}")
         if exc.stdout.strip():
             print(f"  stdout: {exc.stdout.strip()}")
         if exc.stderr.strip():
@@ -259,7 +266,7 @@ def main() -> int:
         print(f"failed to launch sbatch: {exc}")
         return 1
 
-    print(f"{build_job_name(runnable_case_names)}: {completed.stdout.strip()}")
+    print(f"{build_job_name(runnable_case_names)}: {stdout}")
     print()
     print(f"Summary: submitted=1, skipped={skipped}, run_script={paths.run_shock_extraction_script}")
     return 0

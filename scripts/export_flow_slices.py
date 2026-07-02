@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pyvista as pv
 
-from case_selection import choose_postprocess_cases_interactively, deduplicate_case_names, resolve_case_path
+from case_selection import (
+    cases_from_environment,
+    choose_postprocess_cases_interactively,
+    deduplicate_case_names,
+    resolve_case_path,
+)
 from extract_shock_surface import density_scalar, suppress_vtk_warnings, vtk_warning_mode, vtu_name
 from layout import StudyPaths, choose_study_paths_interactively, get_study_paths
 
@@ -32,22 +37,6 @@ def progress(message: str) -> None:
     print(message, flush=True)
 
 
-def cases_from_environment(paths: StudyPaths) -> list[str]:
-    raw_cases = os.environ.get("CFD_CASES", "").strip()
-    single_case = os.environ.get("CFD_CASE", "").strip()
-    requested_cases: list[str] = []
-
-    if raw_cases:
-        requested_cases.extend(part.strip() for part in raw_cases.replace("\n", ",").split(",") if part.strip())
-    if single_case:
-        requested_cases.append(single_case)
-
-    if not requested_cases:
-        return []
-
-    return deduplicate_case_names(paths.study_root, paths.cases_dir, requested_cases)
-
-
 def ensure_point_data(mesh: pv.DataSet) -> pv.DataSet:
     """
     Match the practical ParaView workflow: slice a field that has usable point arrays.
@@ -61,6 +50,17 @@ def ensure_point_data(mesh: pv.DataSet) -> pv.DataSet:
         progress("  [stage] converting cell data to point data")
         return mesh.cell_data_to_point_data()
     return mesh
+
+
+def partial_output_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.part{path.suffix}")
+
+
+def save_atomic(dataset: pv.DataSet, output_path: Path) -> None:
+    partial_path = partial_output_path(output_path)
+    partial_path.unlink(missing_ok=True)
+    dataset.save(partial_path)
+    partial_path.replace(output_path)
 
 
 def export_case(paths: StudyPaths, case_dir: str) -> int:
@@ -87,7 +87,7 @@ def export_case(paths: StudyPaths, case_dir: str) -> int:
         if sliced.n_points == 0:
             progress(f"  [warn] {spec['name']} slice produced no points")
             continue
-        sliced.save(output_path)
+        save_atomic(sliced, output_path)
         written += 1
         progress(f"  [ok ] wrote {output_path} ({sliced.n_points} pts, {sliced.n_cells} cells)")
 
@@ -104,6 +104,7 @@ def main() -> int:
     print("║   Flow Slice Exporter                       ║")
     print("╚══════════════════════════════════════════════╝")
     print(f"Study: {paths.study_name}")
+    print(f"Flow file: {vtu_name}")
     print("Outputs: flow_slice_xy.vtp, flow_slice_xz.vtp")
 
     cases = cases_from_environment(paths)

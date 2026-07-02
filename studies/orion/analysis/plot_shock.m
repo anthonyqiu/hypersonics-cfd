@@ -1,11 +1,10 @@
 clear; clc; close all;
 
-analysis_dir    = resolve_script_dir();
+helpers         = orion_case_helpers();
+analysis_dir    = helpers.resolve_script_dir();
 study_dir       = fileparts(analysis_dir);
 cases_dir       = fullfile(study_dir, 'data', 'cases');
 geometry_file   = fullfile(study_dir, 'geometry', 'orion_profile_xy.csv');
-x_shift_orion   = 0.71;
-x_shift_shock   = -0.133080166111 + 0.133080166111;
 R_stag          = 6;
 plot_orion_2d   = true;
 plot_orion_3d   = false;
@@ -25,7 +24,7 @@ if ~isfolder(cases_dir)
         'Run pull_cluster_results.sh first so results land under studies/orion/data/cases.'], cases_dir);
 end
 
-all_cases = discover_cases(cases_dir, required_file);
+all_cases = helpers.discover_cases(cases_dir, required_file);
 if isempty(all_cases)
     error(['No case folders with %s found in %s\n' ...
         'Pull shock surface files with pull_cluster_results.sh using option 3, 4, 6, or 7.'], ...
@@ -33,7 +32,7 @@ if isempty(all_cases)
 end
 
 %% SHOW MENU
-selected = case_selection_menu(all_cases, plot_mode);
+selected = helpers.case_selection_menu(all_cases, sprintf('%s case group to plot', plot_mode));
 if isempty(selected)
     disp('No cases selected. Exiting.');
     return;
@@ -43,10 +42,9 @@ end
 switch plot_mode
     case '2D'
         plot_shocks_2d( ...
-            selected, cases_dir, geometry_file, x_shift_orion, x_shift_shock, ...
-            R_stag, profile_bins_2d, plot_orion_2d);
+            selected, cases_dir, geometry_file, R_stag, profile_bins_2d, plot_orion_2d, helpers);
     case '3D'
-        plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion_3d);
+        plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion_3d, helpers);
     otherwise
         error('Unsupported plot mode: %s', plot_mode);
 end
@@ -68,120 +66,12 @@ function plot_mode = dimension_selection_menu()
     end
 end
 
-function all_cases = discover_cases(cases_dir, required_file)
-    d = dir(cases_dir);
-    d = d([d.isdir]);
-    names = {d.name};
-    mask = ~strcmp(names, '.') & ~strcmp(names, '..') & ...
-           ~cellfun(@isempty, regexp(names, '^m[0-9p\.]+', 'once'));
-
-    candidate_cases = sort(names(mask));
-    keep_case = cellfun(@(name) isfile(fullfile(cases_dir, name, required_file)), candidate_cases);
-    all_cases = candidate_cases(keep_case);
-end
-
-function selected = case_selection_menu(all_cases, plot_mode)
-    mach_map  = group_by_mach(all_cases);
-    mach_keys = fieldnames(mach_map);
-    mach_nums = cellfun(@(key) mach_map.(key).M_val, mach_keys);
-    [~, si]   = sort(mach_nums);
-    mach_keys = mach_keys(si);
-
-    max_menu_items = 3 * numel(mach_keys) + 4;
-    menu_labels = cell(max_menu_items, 1);
-    menu_cases  = cell(max_menu_items, 1);
-    idx = 0;
-
-    fprintf('\nSelect %s case group to plot:\n\n', plot_mode);
-
-    for m = 1:numel(mach_keys)
-        mach_info = mach_map.(mach_keys{m});
-        mach      = mach_info.label;
-        cases     = mach_info.cases;
-        aoa_cases = cases(contains(cases, '_aoa'));
-        ref_cases = cases(cellfun(@(c) any(contains(c, ...
-            {'_coarse', '_medium', '_fine', '_fine_sym', '_very_fine_sym'})), cases));
-
-        fprintf('  -- %s %s\n', upper(mach), repmat('-', 1, max(1, 36 - numel(mach))));
-
-        if ~isempty(aoa_cases)
-            idx = idx + 1;
-            label = sprintf('%s AoA cases  (%s)', upper(mach), strjoin(aoa_cases, ', '));
-            fprintf('  %2d) %s\n', idx, label);
-            menu_labels{idx} = label;
-            menu_cases{idx}  = aoa_cases;
-        end
-
-        if ~isempty(ref_cases)
-            idx = idx + 1;
-            label = sprintf('%s refinement cases  (%s)', upper(mach), strjoin(ref_cases, ', '));
-            fprintf('  %2d) %s\n', idx, label);
-            menu_labels{idx} = label;
-            menu_cases{idx}  = ref_cases;
-        end
-
-        if ~isempty(aoa_cases) && ~isempty(ref_cases)
-            idx = idx + 1;
-            label = sprintf('All %s cases', upper(mach));
-            fprintf('  %2d) %s\n', idx, label);
-            menu_labels{idx} = label;
-            menu_cases{idx}  = cases;
-        end
-        fprintf('\n');
-    end
-
-    fprintf('  -- Bulk %s\n', repmat('-', 1, 33));
-    all_aoa = all_cases(contains(all_cases, '_aoa'));
-    all_ref = all_cases(cellfun(@(c) any(contains(c, ...
-        {'_coarse', '_medium', '_fine', '_fine_sym', '_very_fine_sym'})), all_cases));
-
-    if ~isempty(all_aoa)
-        idx = idx + 1;
-        fprintf('  %2d) All AoA cases\n', idx);
-        menu_labels{idx} = 'All AoA cases';
-        menu_cases{idx}  = all_aoa;
-    end
-
-    if ~isempty(all_ref)
-        idx = idx + 1;
-        fprintf('  %2d) All refinement cases\n', idx);
-        menu_labels{idx} = 'All refinement cases';
-        menu_cases{idx}  = all_ref;
-    end
-
-    idx = idx + 1;
-    fprintf('  %2d) Everything\n', idx);
-    menu_labels{idx} = 'Everything';
-    menu_cases{idx}  = all_cases;
-
-    idx = idx + 1;
-    fprintf('  %2d) Custom (type case name)\n\n', idx);
-    menu_labels{idx} = 'CUSTOM';
-    menu_cases{idx}  = {};
-
-    menu_labels = menu_labels(1:idx);
-    menu_cases  = menu_cases(1:idx);
-
-    choice = input(sprintf('Choice [1-%d]: ', idx));
-    if isempty(choice) || choice < 1 || choice > idx
-        selected = {};
-        return;
-    end
-
-    if strcmp(menu_labels{choice}, 'CUSTOM')
-        name = input('Enter case folder name: ', 's');
-        selected = {strtrim(name)};
-    else
-        selected = menu_cases{choice};
-    end
-end
-
-function plot_shocks_2d(selected, cases_dir, geometry_file, x_shift_orion, x_shift_shock, R_stag, profile_bins, plot_orion)
+function plot_shocks_2d(selected, cases_dir, geometry_file, R_stag, profile_bins, plot_orion, helpers)
     figure('Color', 'w');
     hold on; grid on; box on;
 
     colors = lines(numel(selected));
-    plot_billig = is_refinement_selection(selected);
+    plot_billig = is_refinement_selection(selected, helpers);
 
     max_curves = 2 * numel(selected) + 1;
     h        = gobjects(max_curves, 1);
@@ -200,9 +90,8 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, x_shift_orion, x_shi
 
         surface_data = load_shock_surface(csv_path);
         [x_profile, r_profile] = extract_surface_profile(surface_data, profile_bins);
-        x_profile = x_profile + x_shift_shock;
 
-        info = parse_case_name(case_name);
+        info = helpers.parse_case_name(case_name);
         col_k = colors(k, :);
 
         idx = idx + 1;
@@ -211,7 +100,7 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, x_shift_orion, x_shi
         leg_text{idx} = sprintf('%s (CFD)', info.label);
 
         if plot_billig && info.is_refinement && ~isnan(info.M_val)
-            mach_field = mach_field_name(info.M_val);
+            mach_field = helpers.mach_field_name(info.M_val);
             r_max = max(r_profile);
             if ~isfield(billig_ranges, mach_field)
                 billig_ranges.(mach_field) = struct('M_val', info.M_val, 'r_max', r_max);
@@ -245,7 +134,7 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, x_shift_orion, x_shi
     if plot_orion
         try
             geo   = readmatrix(geometry_file);
-            xg    = geo(:, 1) + x_shift_orion;
+            xg    = geo(:, 1);
             yg    = geo(:, 2);
             cx    = mean(xg);
             cy    = mean(yg);
@@ -279,7 +168,7 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, x_shift_orion, x_shi
     set(gca, 'FontSize', 13);
 end
 
-function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion)
+function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion, helpers)
     figure('Color', 'w');
     hold on; grid on; box on;
 
@@ -308,7 +197,7 @@ function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion)
         end
 
         surface_data = load_shock_surface(csv_path);
-        info = parse_case_name(case_name);
+        info = helpers.parse_case_name(case_name);
         col_k = colors(k, :);
         xyz_limits = expand_limits_3d(xyz_limits, surface_data.x, surface_data.y, surface_data.z);
 
@@ -474,78 +363,15 @@ function apply_cube_axes_3d(ax, limits, padding_fraction)
     pbaspect(ax, [1, 1, 1]);
 end
 
-function mach_map = group_by_mach(cases)
-    mach_map = struct();
-    for k = 1:numel(cases)
-        tok = regexp(cases{k}, '^(m[0-9p\.]+)', 'tokens', 'once');
-        if isempty(tok)
-            continue;
-        end
-
-        mach_label = tok{1};
-        M_val = str2double(strrep(mach_label(2:end), 'p', '.'));
-        if isfinite(M_val)
-            mach_field = mach_field_name(M_val);
-            mach_label = mach_display_name(M_val);
-        else
-            mach_field = matlab.lang.makeValidName(mach_label);
-        end
-
-        if ~isfield(mach_map, mach_field)
-            mach_map.(mach_field) = struct( ...
-                'label', mach_label, ...
-                'M_val', M_val, ...
-                'cases', {{}});
-        end
-        mach_map.(mach_field).cases{end + 1} = cases{k};
-    end
-end
-
-function info = parse_case_name(case_name)
-    info = struct( ...
-        'M_val', NaN, ...
-        'AOA_val', NaN, ...
-        'mesh_level', '', ...
-        'is_aoa', false, ...
-        'is_refinement', false, ...
-        'label', strrep(case_name, '_', '\_'));
-
-    tok = regexp(case_name, '^m([0-9p\.]+)_aoa([0-9\-\.]+)$', 'tokens', 'once');
-    if ~isempty(tok)
-        info.M_val   = str2double(strrep(tok{1}, 'p', '.'));
-        info.AOA_val = str2double(strrep(tok{2}, 'p', '.'));
-        info.is_aoa  = true;
-        info.label   = sprintf('$M = %.1f$, $\\mathrm{AoA} = %.0f^{\\circ}$', info.M_val, info.AOA_val);
-        return;
-    end
-
-    tok = regexp(case_name, '^m([0-9p\.]+)_(coarse|medium|fine|fine_sym|very_fine_sym)$', 'tokens', 'once');
-    if ~isempty(tok)
-        info.M_val         = str2double(strrep(tok{1}, 'p', '.'));
-        info.mesh_level    = tok{2};
-        info.mesh_level(1) = upper(info.mesh_level(1));
-        info.is_refinement = true;
-        info.label         = sprintf('$M = %.1f$ (%s mesh)', info.M_val, info.mesh_level);
-    end
-end
-
-function tf = is_refinement_selection(cases)
+function tf = is_refinement_selection(cases, helpers)
     tf = ~isempty(cases);
     for k = 1:numel(cases)
-        info = parse_case_name(cases{k});
+        info = helpers.parse_case_name(cases{k});
         if ~info.is_refinement
             tf = false;
             return;
         end
     end
-end
-
-function field_name = mach_field_name(M_val)
-    field_name = ['m_' regexprep(sprintf('%.12g', M_val), '[^0-9A-Za-z]', '_')];
-end
-
-function label = mach_display_name(M_val)
-    label = ['m' sprintf('%.12g', M_val)];
 end
 
 function x_out = get_billig(y_in, M_inf, R_stag)
@@ -555,29 +381,4 @@ function x_out = get_billig(y_in, M_inf, R_stag)
     x_out  = R_stag + delta ...
            - R_curv * cot(theta)^2 .* ...
              (sqrt(1 + (y_in.^2 * tan(theta)^2) / R_curv^2) - 1);
-end
-
-function analysis_dir = resolve_script_dir()
-    full_path = mfilename('fullpath');
-
-    if isempty(full_path)
-        stack = dbstack('-completenames');
-        if ~isempty(stack)
-            full_path = stack(1).file;
-        elseif usejava('desktop')
-            try
-                full_path = matlab.desktop.editor.getActiveFilename;
-            catch
-                full_path = pwd;
-            end
-        else
-            full_path = pwd;
-        end
-    end
-
-    if isfolder(full_path)
-        analysis_dir = full_path;
-    else
-        analysis_dir = fileparts(full_path);
-    end
 end

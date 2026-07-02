@@ -12,7 +12,7 @@ from layout import choose_study_paths_interactively
 
 
 CASE_NAME_RE = re.compile(
-    r"^m\d+(?:\.\d+)?(?:_aoa\d+(?:p\d+)?(?:_[A-Za-z0-9][A-Za-z0-9_.-]*)?|_[A-Za-z0-9][A-Za-z0-9_.-]*)$"
+    r"^m\d+(?:(?:\.|p)\d+)?(?:_aoa\d+(?:p\d+)?(?:_[A-Za-z0-9][A-Za-z0-9_.-]*)?|_[A-Za-z0-9][A-Za-z0-9_.-]*)$"
 )
 
 
