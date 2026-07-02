@@ -27,7 +27,9 @@ SLICE_SPECS = (
     {
         "name": "xz",
         "normal": (0.0, 1.0, 0.0),
-        "origin": (0.0, 0.0, 0.0),
+        # Avoid slicing exactly on the mirrored y=0 interface, which can create
+        # artificial internal boundary loops in VTK.
+        "origin": (0.0, 1.0e-9, 0.0),
         "output": "flow_slice_xz.vtp",
     },
 )
