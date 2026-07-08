@@ -5,10 +5,8 @@ analysis_dir    = helpers.resolve_script_dir();
 study_dir       = fileparts(analysis_dir);
 cases_dir       = fullfile(study_dir, 'data', 'cases');
 geometry_file   = fullfile(study_dir, 'geometry', 'orion_profile_xy.csv');
-R_stag          = 6;
 plot_orion_2d   = true;
-plot_orion_3d   = false;
-profile_bins_2d = 120;
+plot_orion_3d   = true;
 required_file   = 'shock_surface.csv';
 
 set(groot, 'defaultAxesTickLabelInterpreter', 'latex');
@@ -41,8 +39,7 @@ end
 %% PLOT
 switch plot_mode
     case '2D'
-        plot_shocks_2d( ...
-            selected, cases_dir, geometry_file, R_stag, profile_bins_2d, plot_orion_2d, helpers);
+        plot_shocks_2d(selected, cases_dir, geometry_file, plot_orion_2d, helpers);
     case '3D'
         plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion_3d, helpers);
     otherwise
@@ -52,7 +49,7 @@ end
 
 function plot_mode = dimension_selection_menu()
     fprintf('\nPlot shocks in:\n\n');
-    fprintf('   1) 2D profile from shock_surface.csv\n');
+    fprintf('   1) 2D y = 0 symmetry-plane profile from shock_surface.csv\n');
     fprintf('   2) 3D shock surface from shock_surface.csv\n\n');
 
     choice = strtrim(input('Dimension [1-2]: ', 's'));
@@ -66,18 +63,17 @@ function plot_mode = dimension_selection_menu()
     end
 end
 
-function plot_shocks_2d(selected, cases_dir, geometry_file, R_stag, profile_bins, plot_orion, helpers)
+function plot_shocks_2d(selected, cases_dir, geometry_file, plot_orion, helpers)
     figure('Color', 'w');
     hold on; grid on; box on;
 
     colors = lines(numel(selected));
-    plot_billig = is_refinement_selection(selected, helpers);
 
-    max_curves = 2 * numel(selected) + 1;
+    max_curves = numel(selected) + 1;
     h        = gobjects(max_curves, 1);
     leg_text = repmat({''}, max_curves, 1);
     idx = 0;
-    billig_ranges = struct();
+    shock_count = 0;
 
     for k = 1:numel(selected)
         case_name = selected{k};
@@ -89,71 +85,39 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, R_stag, profile_bins
         end
 
         surface_data = load_shock_surface(csv_path);
-        [x_profile, r_profile] = extract_surface_profile(surface_data, profile_bins);
+        [x_profile, z_profile, y_tolerance] = extract_y0_profile(surface_data);
 
         info = helpers.parse_case_name(case_name);
         col_k = colors(k, :);
 
         idx = idx + 1;
-        h(idx) = plot(x_profile,  r_profile, '-', 'LineWidth', 1.4, 'Color', col_k);
-        plot(x_profile, -r_profile, '-', 'LineWidth', 1.4, 'Color', col_k, 'HandleVisibility', 'off');
+        h(idx) = plot(x_profile, z_profile, '-', ...
+            'LineWidth', 1.5, ...
+            'Marker', '.', ...
+            'MarkerSize', 8, ...
+            'Color', col_k);
         leg_text{idx} = sprintf('%s (CFD)', info.label);
+        shock_count = shock_count + 1;
 
-        if plot_billig && info.is_refinement && ~isnan(info.M_val)
-            mach_field = helpers.mach_field_name(info.M_val);
-            r_max = max(r_profile);
-            if ~isfield(billig_ranges, mach_field)
-                billig_ranges.(mach_field) = struct('M_val', info.M_val, 'r_max', r_max);
-            else
-                billig_ranges.(mach_field).r_max = max(billig_ranges.(mach_field).r_max, r_max);
-            end
-        end
-    end
-
-    if plot_billig
-        billig_fields = fieldnames(billig_ranges);
-        billig_mach   = zeros(numel(billig_fields), 1);
-        for b = 1:numel(billig_fields)
-            billig_mach(b) = billig_ranges.(billig_fields{b}).M_val;
-        end
-        [~, order]    = sort(billig_mach);
-        billig_fields = billig_fields(order);
-
-        for b = 1:numel(billig_fields)
-            billig_info = billig_ranges.(billig_fields{b});
-            y_billig = linspace(-billig_info.r_max, billig_info.r_max, 400).';
-            x_billig = get_billig(y_billig, billig_info.M_val, R_stag);
-            x_billig = -x_billig + R_stag;
-
-            idx = idx + 1;
-            h(idx) = plot(x_billig, y_billig, 'k--', 'LineWidth', 1.5);
-            leg_text{idx} = sprintf('$M = %.1f$ (Billig''s)', billig_info.M_val);
+        if y_tolerance > 1e-9
+            fprintf('%s: used |y| <= %.3g m for the symmetry-plane profile.\n', ...
+                case_name, y_tolerance);
         end
     end
 
     if plot_orion
         try
-            geo   = readmatrix(geometry_file);
-            xg    = geo(:, 1);
-            yg    = geo(:, 2);
-            cx    = mean(xg);
-            cy    = mean(yg);
-            theta = atan2(yg - cy, xg - cx);
-            [~, idx_sort] = sort(theta);
-            xg = xg(idx_sort);
-            yg = yg(idx_sort);
-            xg = [xg; xg(1)];
-            yg = [yg; yg(1)];
+            [xg, zg] = load_orion_profile_2d(geometry_file);
 
             idx = idx + 1;
-            h(idx) = plot(xg, yg, 'k-', 'LineWidth', 2.0);
+            h(idx) = plot(xg, zg, 'k-', 'LineWidth', 2.0);
             leg_text{idx} = 'Orion';
         catch ME
             warning(ME.identifier, '%s', ME.message);
         end
     end
 
-    if idx == 0
+    if shock_count == 0
         error('No 2D shock data could be plotted for the selected cases.');
     end
 
@@ -161,8 +125,8 @@ function plot_shocks_2d(selected, cases_dir, geometry_file, R_stag, profile_bins
     leg_text = leg_text(1:idx);
 
     xlabel('$x$ (m)', 'FontSize', 14);
-    ylabel('$\pm r$ (m)', 'FontSize', 14);
-    title('2D Shock Profiles From Shock Surface', 'FontSize', 16);
+    ylabel('$z$ at $y=0$ (m)', 'FontSize', 14);
+    title('Shock and Orion Profiles on the $y = 0$ Plane', 'FontSize', 16);
     axis equal;
     legend(h, leg_text, 'Location', 'bestoutside', 'FontSize', 12);
     set(gca, 'FontSize', 13);
@@ -177,14 +141,15 @@ function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion, helpers)
     h        = gobjects(max_objects, 1);
     leg_text = repmat({''}, max_objects, 1);
     idx = 0;
+    shock_count = 0;
     xyz_limits = empty_limits_3d();
 
     if isscalar(selected)
-        point_size = 14;
-        point_alpha = 0.58;
+        point_size = 10;
+        point_alpha = 0.50;
     else
-        point_size = 9;
-        point_alpha = 0.44;
+        point_size = 6;
+        point_alpha = 0.28;
     end
 
     for k = 1:numel(selected)
@@ -208,6 +173,7 @@ function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion, helpers)
             'MarkerFaceAlpha', point_alpha, ...
             'MarkerEdgeAlpha', 0.10);
         leg_text{idx} = info.label;
+        shock_count = shock_count + 1;
     end
 
     if plot_orion
@@ -216,16 +182,23 @@ function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion, helpers)
             xyz_limits = expand_limits_3d(xyz_limits, Xg, Yg, Zg);
             idx = idx + 1;
             h(idx) = surf(Xg, Yg, Zg, ...
-                'FaceColor', [0.20, 0.20, 0.20], ...
-                'FaceAlpha', 0.16, ...
-                'EdgeColor', 'none');
+                'FaceColor', [0.42, 0.42, 0.42], ...
+                'FaceAlpha', 0.42, ...
+                'EdgeColor', [0.18, 0.18, 0.18], ...
+                'EdgeAlpha', 0.08);
             leg_text{idx} = 'Orion';
+
+            [x_body, z_body] = load_orion_profile_2d(geometry_file);
+            plot3(x_body, zeros(size(x_body)), z_body, ...
+                'k-', 'LineWidth', 1.6, 'HandleVisibility', 'off');
+            plot3(x_body, z_body, zeros(size(x_body)), ...
+                'k-', 'LineWidth', 1.0, 'HandleVisibility', 'off');
         catch ME
             warning(ME.identifier, '%s', ME.message);
         end
     end
 
-    if idx == 0
+    if shock_count == 0
         error('No 3D shock data could be plotted for the selected cases.');
     end
 
@@ -235,9 +208,9 @@ function plot_shocks_3d(selected, cases_dir, geometry_file, plot_orion, helpers)
     xlabel('$x$ (m)', 'FontSize', 14);
     ylabel('$y$ (m)', 'FontSize', 14);
     zlabel('$z$ (m)', 'FontSize', 14);
-    title('3D Shock Points', 'FontSize', 16);
+    title('3D Shock Surface Points and Orion Body', 'FontSize', 16);
     apply_cube_axes_3d(gca, xyz_limits, 0.06);
-    view(3);
+    view(45, 22);
     rotate3d on;
     camlight('headlight');
     lighting gouraud;
@@ -267,43 +240,72 @@ function surface_data = load_shock_surface(csv_path)
         'radius', radius);
 end
 
-function [x_profile, r_profile] = extract_surface_profile(surface_data, num_bins)
+function [x_profile, z_profile, y_tolerance] = extract_y0_profile(surface_data)
     x = surface_data.x(:);
-    r = surface_data.radius(:);
-    valid = isfinite(x) & isfinite(r);
+    y = surface_data.y(:);
+    z = surface_data.z(:);
+    valid = isfinite(x) & isfinite(y) & isfinite(z);
     x = x(valid);
-    r = r(valid);
+    y = y(valid);
+    z = z(valid);
 
     if isempty(x)
         error('shock_surface.csv did not contain any valid points.');
     end
 
-    if max(x) == min(x)
-        x_profile = x(1);
-        r_profile = max(r);
-        return;
+    y_tolerance = 1e-9;
+    mask = abs(y) <= y_tolerance;
+
+    if nnz(mask) < 3
+        sorted_abs_y = sort(abs(y));
+        target_count = min(numel(sorted_abs_y), max(3, ceil(0.002 * numel(sorted_abs_y))));
+        y_tolerance = max(y_tolerance, sorted_abs_y(target_count));
+        mask = abs(y) <= y_tolerance;
     end
 
-    num_bins = max(24, min(num_bins, numel(x)));
-    edges = linspace(min(x), max(x), num_bins + 1);
-    bin_idx = discretize(x, edges);
-    valid = ~isnan(bin_idx);
-    x = x(valid);
-    r = r(valid);
-    bin_idx = bin_idx(valid);
+    if nnz(mask) < 3
+        error('Could not find enough shock-surface points near y = 0.');
+    end
 
-    x_profile = accumarray(bin_idx, x, [num_bins, 1], @mean, NaN);
-    r_profile = accumarray(bin_idx, r, [num_bins, 1], @max, NaN);
+    x_profile = x(mask);
+    z_profile = z(mask);
 
-    valid = isfinite(x_profile) & isfinite(r_profile);
+    [z_profile, order] = sort(z_profile);
+    x_profile = x_profile(order);
+end
+
+function [x_profile, z_profile] = load_orion_profile_2d(geometry_file)
+    geo = readmatrix(geometry_file);
+    if size(geo, 2) < 2
+        error('Orion profile file must contain at least two columns: x and profile coordinate.');
+    end
+
+    x_profile = geo(:, 1);
+    z_profile = geo(:, 2);
+    valid = isfinite(x_profile) & isfinite(z_profile);
     x_profile = x_profile(valid);
-    r_profile = r_profile(valid);
+    z_profile = z_profile(valid);
+
+    if isempty(x_profile)
+        error('Orion profile file did not contain valid profile points.');
+    end
+
+    if x_profile(1) ~= x_profile(end) || z_profile(1) ~= z_profile(end)
+        x_profile = [x_profile; x_profile(1)];
+        z_profile = [z_profile; z_profile(1)];
+    end
 end
 
 function [Xg, Yg, Zg] = make_orion_surface(geometry_file)
-    geo = readmatrix(geometry_file);
-    x = geo(:, 1);
-    r = abs(geo(:, 2));
+    [x, profile_coordinate] = load_orion_profile_2d(geometry_file);
+    r = abs(profile_coordinate);
+
+    valid = isfinite(x) & isfinite(r);
+    x = x(valid);
+    r = r(valid);
+    if isempty(x)
+        error('Orion profile file did not contain valid points for revolution.');
+    end
 
     [x_unique, ~, ic] = uniquetol(x, 1e-9, 'DataScale', 1);
     r_profile = accumarray(ic, r, [], @max);
@@ -361,24 +363,4 @@ function apply_cube_axes_3d(ax, limits, padding_fraction)
 
     daspect(ax, [1, 1, 1]);
     pbaspect(ax, [1, 1, 1]);
-end
-
-function tf = is_refinement_selection(cases, helpers)
-    tf = ~isempty(cases);
-    for k = 1:numel(cases)
-        info = helpers.parse_case_name(cases{k});
-        if ~info.is_refinement
-            tf = false;
-            return;
-        end
-    end
-end
-
-function x_out = get_billig(y_in, M_inf, R_stag)
-    delta  = 0.143 * R_stag * exp(3.24 / M_inf^2);
-    R_curv = 1.143 * R_stag * exp(0.54 / (M_inf - 1)^1.2);
-    theta  = asin(1 / M_inf);
-    x_out  = R_stag + delta ...
-           - R_curv * cot(theta)^2 .* ...
-             (sqrt(1 + (y_in.^2 * tan(theta)^2) / R_curv^2) - 1);
 end

@@ -229,7 +229,8 @@ if ~isempty(tok)
     info.mesh_level    = tok{2};
     info.mesh_level(1) = upper(info.mesh_level(1));
     info.is_refinement = true;
-    info.label         = sprintf('$M = %.1f$ (%s mesh)', info.M_val, info.mesh_level);
+    mesh_label         = strrep(info.mesh_level, '_', '\_');
+    info.label         = sprintf('$M = %.1f$ (%s mesh)', info.M_val, mesh_label);
 end
 end
 
