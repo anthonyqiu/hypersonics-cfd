@@ -150,6 +150,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=f"Allow replacing existing {FULL_FLOW_FILENAME}.",
     )
+    parser.add_argument(
+        "--rerun-postprocess",
+        "--overwrite-postprocess",
+        action="store_true",
+        dest="rerun_postprocess",
+        help="Submit selected postprocess steps even when their outputs already exist.",
+    )
     return parser
 
 
@@ -240,13 +247,13 @@ def build_solver_command(paths: StudyPaths, spec: dict[str, object], case_dir: P
     ]
 
 
-def postprocess_flags_for_step(step: str, overwrite_mirror: bool) -> tuple[bool, bool, bool, bool]:
+def postprocess_flags_for_step(step: str, overwrite_outputs: bool) -> tuple[bool, bool, bool, bool]:
     if step == "mirror":
-        return True, overwrite_mirror, False, False
+        return True, overwrite_outputs, False, False
     if step == "slices":
-        return False, False, True, False
+        return False, overwrite_outputs, True, False
     if step == "shock":
-        return False, False, False, True
+        return False, overwrite_outputs, False, True
     raise ValueError(f"unknown postprocess step: {step}")
 
 
@@ -256,7 +263,7 @@ def build_postprocess_step_command(
     *,
     step: str,
     flow_file: str,
-    overwrite_mirror: bool,
+    overwrite_outputs: bool,
     cpus_per_task: int,
     mem: str,
     time_limit: str,
@@ -265,9 +272,9 @@ def build_postprocess_step_command(
     case_path = paths.case_path(case_name)
     log_dir = case_path / "logs" / "postprocess"
     run_script = paths.repo_root / "templates" / "slurm" / "run_postprocess_workflow.sh"
-    run_mirror, mirror_overwrite_flag, run_slices, run_shock = postprocess_flags_for_step(
+    run_mirror, overwrite_outputs_flag, run_slices, run_shock = postprocess_flags_for_step(
         step,
-        overwrite_mirror,
+        overwrite_outputs,
     )
     job_prefix = POSTPROCESS_STEP_JOB_PREFIXES[step]
     command = [
@@ -297,7 +304,7 @@ def build_postprocess_step_command(
         case_name,
         flow_file,
         "1" if run_mirror else "0",
-        "1" if mirror_overwrite_flag else "0",
+        "1" if overwrite_outputs_flag else "0",
         "1" if run_slices else "0",
         "1" if run_shock else "0",
     ]
@@ -450,6 +457,8 @@ def main() -> int:
             f"mem={post_mem or 'not requested'}, default times=({default_step_summary}), "
             f"account={post_account}"
         )
+        if args.rerun_postprocess:
+            print("  Postprocess outputs: rerun selected steps and replace their outputs")
 
     requested_cases = parse_case_names(args.cases)
     if requested_cases:
@@ -504,11 +513,12 @@ def main() -> int:
 
         if run_postprocess:
             for step in post_steps:
-                if postprocess_step_outputs_complete(
+                upstream_rerun = bool(dependencies)
+                if not upstream_rerun and postprocess_step_outputs_complete(
                     case_dir,
                     step,
                     overwrite_mirror=overwrite_mirror,
-                ):
+                ) and not args.rerun_postprocess:
                     print(f"{case_name}: skip {step}, outputs already complete")
                     already_complete += 1
                     continue
@@ -525,12 +535,17 @@ def main() -> int:
 
                 if submit_jobs:
                     (case_dir / "logs" / "postprocess").mkdir(parents=True, exist_ok=True)
+                overwrite_step_outputs = (
+                    args.rerun_postprocess
+                    or upstream_rerun
+                    or (step == "mirror" and overwrite_mirror)
+                )
                 post_command = build_postprocess_step_command(
                     paths,
                     case_name,
                     step=step,
                     flow_file=flow_file,
-                    overwrite_mirror=overwrite_mirror,
+                    overwrite_outputs=overwrite_step_outputs,
                     cpus_per_task=post_cpus,
                     mem=post_mem,
                     time_limit=postprocess_time_for_step(spec, default_post_step_times, step),

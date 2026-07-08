@@ -20,6 +20,7 @@ from extract_shock_surface import (
     build_stagnation_search_diagnostics,
     build_streamwise_window,
     choose_stagnation_shock_node,
+    choose_body_stagnation_anchor,
     configured_sampling_steps,
     density_scalar,
     load_case_aoa_degrees,
@@ -165,6 +166,15 @@ def export_case(paths: StudyPaths, case_dir: str) -> Path | None:
     aoa_degrees = load_case_aoa_degrees(paths.generated_config_dir, case_path)
     print(f"  [stage] building AoA-aligned frame (aoa={aoa_degrees:.1f} deg)")
     streamwise, normal, spanwise = streamwise_basis_from_aoa(aoa_degrees)
+    body_anchor, body_anchor_source = choose_body_stagnation_anchor(
+        paths.study_root,
+        case_path,
+        streamwise,
+    )
+    print(
+        f"  [stage] body stagnation anchor from {body_anchor_source}: "
+        f"x={body_anchor[0]:.4f}, y={body_anchor[1]:.4f}, z={body_anchor[2]:.4f}"
+    )
 
     points = np.asarray(gradient_mesh.points)
     gradient = np.asarray(gradient_mesh["gradient"], dtype=float)
@@ -172,7 +182,7 @@ def export_case(paths: StudyPaths, case_dir: str) -> Path | None:
     shock_sensor_raw = np.linalg.norm(gradient, axis=1)
     gradient_mesh["ShockSensorRaw"] = shock_sensor_raw
 
-    _, center_peak = choose_stagnation_shock_node(points, shock_sensor_raw, streamwise)
+    _, center_peak = choose_stagnation_shock_node(points, shock_sensor_raw, streamwise, body_anchor)
     active_mask = shock_sensor_raw >= center_peak * surface_sensor_min_fraction
     active_points = points[active_mask]
     if active_points.size == 0:
@@ -181,11 +191,11 @@ def export_case(paths: StudyPaths, case_dir: str) -> Path | None:
     dt, dn = configured_sampling_steps()
     sensor_floor = center_peak * surface_sensor_min_fraction
     stream_center, stream_half_length = build_streamwise_window(
-        active_points, streamwise, normal, spanwise, dn
+        active_points, streamwise, normal, spanwise, dn, body_anchor
     )
     diagnostics = build_stagnation_search_diagnostics(
         gradient_mesh,
-        stream_center,
+        body_anchor + stream_center * streamwise,
         stream_half_length,
         streamwise,
         dn,

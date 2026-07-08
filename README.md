@@ -104,6 +104,12 @@ Export ParaView-ready `xy` and `xz` flow slices on the cluster:
 python3 scripts/export_flow_slices.py
 ```
 
+Compare extracted refinement-study shock surfaces with normalized symmetric surface distances:
+
+```bash
+python3 scripts/compare_shock_surfaces.py --study orion
+```
+
 Pull selected results directly from the cluster to a local machine:
 
 ```bash

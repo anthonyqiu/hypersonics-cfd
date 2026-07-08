@@ -269,7 +269,9 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
     defaults = dict(matrix["defaults"])
     profiles = flatten_named_tables(dict(matrix["profiles"]))
     meshes = dict(matrix["meshes"])
-    studies = dict(matrix["generation"]["studies"])
+    generation = dict(matrix["generation"])
+    studies = dict(generation["studies"])
+    excluded_case_names = {str(value) for value in generation.get("exclude_cases", [])}
     override_rules = list(matrix.get("overrides", []))
 
     case_specs: list[dict[str, Any]] = []
@@ -308,6 +310,8 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
                         mesh_level=mesh_level,
                         study=study_name,
                     )
+                    if spec["case_name"] in excluded_case_names:
+                        continue
                     spec = apply_override_rules(spec, override_rules)
                     mesh_value = mesh_file(meshes, str(spec["mesh_level"]))
                     spec["mesh_filename"] = resolve_mesh_reference(paths, mesh_value)

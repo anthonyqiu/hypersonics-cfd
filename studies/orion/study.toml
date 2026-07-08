@@ -25,7 +25,7 @@ linear_solver_iter = 100
 linear_solver_error = "1E-6"
 mg_post_smooth = "( 0, 0, 0, 0 )"
 conv_residual_minval = -5
-conv_startiter = 250
+conv_startiter = 10000
 screen_output = "(INNER_ITER, WALL_TIME, RMS_DENSITY, RMS_MOMENTUM-X, RMS_MOMENTUM-Y, RMS_MOMENTUM-Z, RMS_ENERGY, RMS_NU_TILDE, DRAG)"
 volume_output = "MACH, PRESSURE, TEMPERATURE, DENSITY, HEAT_FLUX, Y_PLUS"
 
@@ -39,8 +39,8 @@ job_account = "rrg-jphickey"
 postprocess_job_cpus_per_task = 1
 postprocess_job_mem = ""
 mirror_job_time = "00:15:00"
-slices_job_time = "00:30:00"
-shock_job_time = "00:30:00"
+slices_job_time = "00:15:00"
+shock_job_time = "01:00:00"
 
 [meshes]
 coarse = "coarse.su2"
@@ -53,6 +53,9 @@ marker_heatflux = "( ORION_SURFACE, 0.0 )"
 marker_far = "( FARFIELD )"
 marker_sym = "( SYMMETRY )"
 marker_monitoring = "( ORION_SURFACE )"
+
+[generation]
+exclude_cases = ["m6_coarse", "m9_coarse"]
 
 [generation.studies.aoa]
 mach_profiles = ["m1p5", "m3", "m6", "m9"]
@@ -96,9 +99,9 @@ cfl_adapt_param = "(0.5, 1.1, 0.05, 0.5)"
 [profiles.m9]
 mach_number = "9"
 reynolds_number = "1.029342800042823E09"
-cfl_adapt = false
-cfl_number = "0.001"
-cfl_adapt_param = "(0.5, 1.1, 0.01, 0.05)"
+cfl_adapt = true
+cfl_number = "0.005"
+cfl_adapt_param = "(0.5, 1.05, 0.005, 0.05)"
 
 # Override rules are applied in order, top to bottom.
 # You can override any key already used by the templates.
@@ -110,6 +113,7 @@ cfl_adapt_param = "(0.5, 1.1, 0.01, 0.05)"
 #   match_aoa        = [40, 50, 60]
 #   match_aoa_min    = 40
 #   match_aoa_max    = 60
+# Exclude permanently bad/unused cases with [generation].exclude_cases.
 # Boundary conditions are symmetric by default. Override individual marker keys only if
 # the symmetric mesh labels change:
 #   marker_sym = "( SYMMETRY )"
@@ -139,65 +143,49 @@ cfl_adapt_param = "(0.5, 1.1, 0.01, 0.05)"
 # restart_sol = true
 
 [[overrides]]
-name = "m9 completed runs restart"
-match_cases = ["m9_fine", "m9_aoa0"]
-restart_sol = true
-
-[[overrides]]
 name = "coarse mesh walltime"
 match_mesh_level = ["coarse"]
 job_time = "04:00:00"
 mirror_job_time = "00:15:00"
 slices_job_time = "00:15:00"
-shock_job_time = "00:15:00"
+shock_job_time = "00:30:00"
 
 [[overrides]]
 name = "medium mesh walltime"
 match_mesh_level = ["medium"]
-job_time = "08:00:00"
+job_time = "05:00:00"
 mirror_job_time = "00:15:00"
-slices_job_time = "00:30:00"
-shock_job_time = "00:30:00"
+slices_job_time = "00:15:00"
+shock_job_time = "02:00:00"
 
 [[overrides]]
 name = "fine mesh walltime"
 match_mesh_level = ["fine"]
-job_time = "12:00:00"
+job_time = "11:00:00"
 mirror_job_time = "00:15:00"
-slices_job_time = "01:00:00"
-shock_job_time = "01:00:00"
+slices_job_time = "00:15:00"
+shock_job_time = "01:30:00"
 
 [[overrides]]
 name = "very fine mesh walltime"
 match_mesh_level = ["very_fine"]
-job_time = "16:00:00"
-mirror_job_time = "00:20:00"
-slices_job_time = "02:00:00"
-shock_job_time = "02:00:00"
+job_time = "18:00:00"
+mirror_job_time = "00:15:00"
+slices_job_time = "00:15:00"
+shock_job_time = "05:00:00"
 
 [[overrides]]
-name = "m1p5 coarse solver walltime"
-match_mach = ["1p5"]
-match_mesh_level = ["coarse"]
-job_time = "01:00:00"
+name = "m9 solver stability"
+match_mach = ["9"]
+restart_sol = false
+conv_startiter = 30000
+job_time = "24:00:00"
 
 [[overrides]]
-name = "m1p5 medium solver walltime"
-match_mach = ["1p5"]
-match_mesh_level = ["medium"]
-job_time = "01:30:00"
-
-[[overrides]]
-name = "m1p5 fine solver walltime"
-match_mach = ["1p5"]
-match_mesh_level = ["fine"]
-job_time = "03:00:00"
-
-[[overrides]]
-name = "m1p5 very fine solver walltime"
-match_mach = ["1p5"]
-match_mesh_level = ["very_fine"]
-job_time = "08:00:00"
+name = "restart timed-out fine refinement continuations"
+match_cases = ["m1p5_fine", "m3_fine"]
+restart_sol = true
+job_time = "11:00:00"
 
 # REFINEMENT OVERIDES
 # [[overrides]]

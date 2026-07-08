@@ -5,15 +5,15 @@ study_name="${1:-}"
 case_name="${2:-}"
 flow_file="${3:-flow_full.vtu}"
 run_mirror="${4:-1}"
-overwrite_mirror="${5:-0}"
+overwrite_outputs="${5:-0}"
 run_slices="${6:-1}"
 run_shock="${7:-1}"
 
 if [[ -z "$study_name" || -z "$case_name" ]]; then
-    echo "Usage: $0 <study-name> <case-name> [flow-file] [run-mirror: 0|1] [overwrite-mirror: 0|1] [run-slices: 0|1] [run-shock: 0|1]" >&2
+    echo "Usage: $0 <study-name> <case-name> [flow-file] [run-mirror: 0|1] [overwrite-outputs: 0|1] [run-slices: 0|1] [run-shock: 0|1]" >&2
     exit 2
 fi
-for flag_name in run_mirror overwrite_mirror run_slices run_shock; do
+for flag_name in run_mirror overwrite_outputs run_slices run_shock; do
     flag_value="${!flag_name}"
     if [[ "$flag_value" != "0" && "$flag_value" != "1" ]]; then
         echo "$flag_name must be 0 or 1." >&2
@@ -37,6 +37,18 @@ complete_outputs() {
     local path
     for path in "$@"; do
         complete_file "$path" || return 1
+    done
+    return 0
+}
+
+outputs_fresh_for_input() {
+    local input_path="$1"
+    shift
+    local path
+    complete_file "$input_path" || return 1
+    for path in "$@"; do
+        complete_file "$path" || return 1
+        [[ "$path" -nt "$input_path" ]] || return 1
     done
     return 0
 }
@@ -106,12 +118,13 @@ echo "Flow file:  $flow_file"
 echo "Mirror:     $run_mirror"
 echo "Slices:     $run_slices"
 echo "Shock:      $run_shock"
+echo "Overwrite:  $overwrite_outputs"
 echo "Threads:    $thread_count"
 
 mirror_step() {
     echo
     echo "=== Mirroring half-domain flow ==="
-    if complete_file "$case_path/flow_full.vtu" && [[ "$overwrite_mirror" != "1" ]]; then
+    if complete_file "$case_path/flow_full.vtu" && [[ "$overwrite_outputs" != "1" ]]; then
         echo "Keeping existing $case_path/flow_full.vtu"
         TIMING_STEP_STATUS="skipped"
         TIMING_STEP_NOTE="flow_full.vtu already exists"
@@ -141,7 +154,7 @@ slices_step() {
         TIMING_STEP_NOTE="missing $flow_file"
         return 2
     fi
-    if complete_outputs "$case_path/flow_slice_xy.vtp" "$case_path/flow_slice_xz.vtp"; then
+    if outputs_fresh_for_input "$case_path/$flow_file" "$case_path/flow_slice_xy.vtp" "$case_path/flow_slice_xz.vtp" && [[ "$overwrite_outputs" != "1" ]]; then
         echo "Keeping existing flow_slice_xy.vtp and flow_slice_xz.vtp"
         TIMING_STEP_STATUS="skipped"
         TIMING_STEP_NOTE="flow slices already exist"
@@ -159,7 +172,7 @@ shock_step() {
         TIMING_STEP_NOTE="missing $flow_file"
         return 2
     fi
-    if complete_outputs "$case_path/shock_surface.csv" "$case_path/shock_surface.vtp"; then
+    if outputs_fresh_for_input "$case_path/$flow_file" "$case_path/shock_surface.csv" "$case_path/shock_surface.vtp" && [[ "$overwrite_outputs" != "1" ]]; then
         echo "Keeping existing shock_surface.csv and shock_surface.vtp"
         TIMING_STEP_STATUS="skipped"
         TIMING_STEP_NOTE="shock surface already exists"

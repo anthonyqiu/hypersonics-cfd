@@ -108,14 +108,14 @@ panel_prominence_check_min_radius = 5.0
 weak_prominence_gap_fill_max_rays = 2
 
 # Stagnation search refinement:
-# - first scan the long stagnation line with a coarse spacing
+# - first scan the long stagnation line with a moderately coarse spacing
 # - then resample a smaller window around that coarse peak using a finer fraction of `dn`
-stagnation_coarse_step_factor = 10.0
+stagnation_coarse_step_factor = 2.0
 stagnation_refined_step_factor = 0.2
 # When the stagnation line is body-anchored, the body/wall gradient can be stronger than the
-# bow shock. Ignore a tiny region around and behind the body anchor when choosing the first
-# coarse stagnation peak.
-stagnation_body_exclusion_dn_factor = 5.0
+# bow shock. Keep this exclusion conservative while still allowing high-Mach,
+# low-standoff shocks to be sampled.
+stagnation_body_exclusion_dn_factor = 2.0
 
 # Panel-guided search-line settings used after the first shell.
 # Keep search lines local to the panel prediction so they cannot reach unrelated gradient
@@ -846,8 +846,10 @@ def build_stagnation_search_diagnostics(
         stream_half_length,
         coarse_step,
     )
-    body_exclusion = max(stagnation_body_exclusion_dn_factor * dn, 2.0 * dn)
-    coarse_candidate, _, _ = find_shock_node_on_line_result(
+    body_exclusion = max(stagnation_body_exclusion_dn_factor * dn, dn)
+    coarse_search_mask = np.asarray(coarse_sample["valid_mask"], dtype=bool).copy()
+    coarse_search_mask &= np.asarray(coarse_sample["line_coordinates"], dtype=float) <= -body_exclusion
+    coarse_candidate, coarse_rejection_reason, _ = find_shock_node_on_line_result(
         coarse_sample,
         min_height=0.0,
         selection_mode=PEAK_MODE_FIRST_UPSTREAM,
@@ -856,7 +858,17 @@ def build_stagnation_search_diagnostics(
         max_line_coordinate=-body_exclusion,
     )
     if coarse_candidate is None:
-        raise ValueError("could not find a shock node on the coarse stagnation node line")
+        reason = coarse_rejection_reason or "unknown"
+        valid_count = int(np.count_nonzero(coarse_search_mask))
+        if valid_count:
+            search_sensor = np.asarray(coarse_sample["shock_sensor_raw"], dtype=float)[coarse_search_mask]
+            search_max = float(np.nanmax(search_sensor))
+        else:
+            search_max = float("nan")
+        raise ValueError(
+            "could not find a shock node on the coarse stagnation node line "
+            f"({reason}; valid_search_samples={valid_count}, max_raw_sensor={search_max:.6g})"
+        )
 
     refine_half_length = min(stream_half_length, coarse_step)
     refine_center = np.asarray(coarse_candidate["point"], dtype=float)

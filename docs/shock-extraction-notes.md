@@ -44,6 +44,11 @@ of the local `n` search-line coordinate.
 
 That means the extractor does not assume the forward direction is always global `x`.
 
+For Orion, `studies/orion/geometry/orion_profile_xy.csv` is stored in the active
+shifted mesh coordinate system, with the geometric stagnation nose near `x=0`. Keep that
+profile aligned with the active symmetric meshes; the extractor and MATLAB plotting helpers
+do not apply hidden origin shifts.
+
 ## Batch workflow
 
 The supported batch path is [`scripts/submit_workflow.py`](/scratch/anthonyy/hypersonics-cfd/scripts/submit_workflow.py).

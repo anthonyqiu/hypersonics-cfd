@@ -15,10 +15,18 @@ from setup_cases import load_case_setup
 
 
 STEPS = ("solver", "mirror", "slices", "shock")
+LOG_TAIL_BYTES = 256_000
 
 
 def complete_file(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
+
+
+def fresh_outputs(input_path: Path, output_paths: list[Path]) -> bool:
+    if not complete_file(input_path):
+        return False
+    input_mtime = input_path.stat().st_mtime
+    return all(complete_file(path) and path.stat().st_mtime >= input_mtime for path in output_paths)
 
 
 def parse_case_names(raw_cases: str) -> list[str]:
@@ -31,6 +39,44 @@ def solver_complete(case_dir: Path) -> bool:
 
 def solver_partial(case_dir: Path) -> bool:
     return any(complete_file(case_dir / name) for name in ("history.csv", "flow.vtu", "surface_flow.vtu"))
+
+
+def latest_file(paths: list[Path]) -> Path | None:
+    existing = [path for path in paths if path.is_file()]
+    if not existing:
+        return None
+    return max(existing, key=lambda path: path.stat().st_mtime)
+
+
+def read_tail(path: Path, max_bytes: int = LOG_TAIL_BYTES) -> str:
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        if size > max_bytes:
+            handle.seek(size - max_bytes)
+        return handle.read().decode("utf-8", errors="replace")
+
+
+def latest_solver_log_status(case_dir: Path) -> str:
+    log_dir = case_dir / "logs" / "solver"
+    latest = latest_file(list(log_dir.glob("solver_*.out")) + list(log_dir.glob("solver_*.err")))
+    if latest is None:
+        return ""
+
+    job_id = latest.stem.split("_")[-1]
+    text_parts = []
+    for suffix in ("out", "err"):
+        path = log_dir / f"solver_{job_id}.{suffix}"
+        if path.is_file():
+            text_parts.append(read_tail(path))
+    text = "\n".join(text_parts)
+
+    if "DUE TO TIME LIMIT" in text or "Reason=TimeLimit" in text:
+        return "time_limit"
+    if "NonZeroExitCode" in text:
+        return "failed"
+    if "Exit Success (SU2_CFD)" in text or "All convergence criteria satisfied" in text:
+        return "success"
+    return ""
 
 
 def mirror_complete(case_dir: Path) -> bool:
@@ -47,17 +93,38 @@ def shock_complete(case_dir: Path) -> bool:
 
 def output_status(case_dir: Path, step: str) -> str:
     if step == "solver":
+        log_status = latest_solver_log_status(case_dir)
+        if log_status == "time_limit":
+            return "partial:time_limit" if solver_partial(case_dir) else "failed:time_limit"
+        if log_status == "failed":
+            return "partial:failed" if solver_partial(case_dir) else "failed"
         if solver_complete(case_dir):
             return "done"
         if solver_partial(case_dir):
             return "partial"
         return "missing"
     if step == "mirror":
-        return "done" if mirror_complete(case_dir) else "missing"
+        if not mirror_complete(case_dir):
+            return "missing"
+        flow_path = case_dir / "flow.vtu"
+        full_flow_path = case_dir / "flow_full.vtu"
+        return "stale" if complete_file(flow_path) and full_flow_path.stat().st_mtime < flow_path.stat().st_mtime else "done"
     if step == "slices":
-        return "done" if slices_complete(case_dir) else "missing"
+        if not slices_complete(case_dir):
+            return "missing"
+        return (
+            "done"
+            if fresh_outputs(case_dir / "flow_full.vtu", [case_dir / "flow_slice_xy.vtp", case_dir / "flow_slice_xz.vtp"])
+            else "stale"
+        )
     if step == "shock":
-        return "done" if shock_complete(case_dir) else "missing"
+        if not shock_complete(case_dir):
+            return "missing"
+        return (
+            "done"
+            if fresh_outputs(case_dir / "flow_full.vtu", [case_dir / "shock_surface.csv", case_dir / "shock_surface.vtp"])
+            else "stale"
+        )
     raise ValueError(f"unknown step: {step}")
 
 
