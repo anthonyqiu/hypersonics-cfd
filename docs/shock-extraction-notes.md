@@ -6,6 +6,8 @@ This repo keeps one supported shock-surface workflow:
 - [`scripts/submit_workflow.py`](/scratch/anthonyy/hypersonics-cfd/scripts/submit_workflow.py)
 
 The older rectangular shock extractor is intentionally retired and is no longer part of the maintained workflow.
+The scripts above are stable command entry points. Reusable implementation
+lives under `src/hypersonics_cfd/`.
 
 ## What the extractor does
 
@@ -36,7 +38,9 @@ of the local `n` search-line coordinate.
 
 ## Geometry and AoA handling
 
-[`scripts/extract_shock_surface.py`](/scratch/anthonyy/hypersonics-cfd/scripts/extract_shock_surface.py) now contains the geometry helpers directly. They are responsible for:
+[`src/hypersonics_cfd/shock/frame.py`](/scratch/anthonyy/hypersonics-cfd/src/hypersonics_cfd/shock/frame.py)
+defines the body-fixed `ShockFrame`. The frame and extraction helpers are
+responsible for:
 
 - recovering the case AoA from the generated config or case name
 - building the local `streamwise`, `pitch_normal`, and `spanwise` basis

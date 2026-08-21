@@ -6,10 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from case_selection import choose_managed_case_specs_interactively, prompt_yes_no
-from layout import StudyPaths, choose_study_paths_interactively
-from slurm_helpers import command_string, submit_sbatch
-from setup_cases import load_case_setup, stage_case
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from hypersonics_cfd.cases import choose_managed_case_specs_interactively, prompt_yes_no
+from hypersonics_cfd.study import StudyPaths, choose_study_paths_interactively
+from hypersonics_cfd.workflow.setup import load_case_setup, stage_case
+from hypersonics_cfd.workflow.slurm import command_string, submit_sbatch
 
 
 RESULT_PATTERNS = (

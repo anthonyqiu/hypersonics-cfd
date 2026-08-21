@@ -6,7 +6,11 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from case_selection import (
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from hypersonics_cfd.cases import (
     deduplicate_case_names,
     discover_postprocess_cases,
     mach_sort_key,
@@ -14,8 +18,8 @@ from case_selection import (
     prompt_yes_no,
     resolve_case_path,
 )
-from layout import StudyPaths, choose_study_paths_interactively
-from slurm_helpers import command_string, submit_sbatch
+from hypersonics_cfd.study import StudyPaths, choose_study_paths_interactively
+from hypersonics_cfd.workflow.slurm import command_string, submit_sbatch
 
 
 FLOW_FILENAME = "flow.vtu"

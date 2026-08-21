@@ -20,9 +20,11 @@
 3. Dry-run or submit solver/postprocess jobs with `python3 ../../scripts/submit_workflow.py`.
 4. Check case progress with `python3 ../../scripts/workflow_status.py`.
 5. Export the coarse/refined initial stagnation search-line profile with `python3 ../../scripts/export_initial_search_line.py` when you want to inspect raw vs smoothed `|grad rho|`.
-6. Export lighter ParaView-ready flow slices with `python3 ../../scripts/export_flow_slices.py` when you want `xy` and `xz` planes without opening the full 3D field locally.
-7. Compare refinement shock surfaces with `python3 ../../scripts/compare_shock_surfaces.py --study orion`; by default it writes `data/shock_surface_deviation_refinement.csv`.
-8. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout. By default it writes into `data/cases/`; set `LOCAL_CASES_DIR` only if you want a different destination.
+6. Extract the Orion wall y+ surface with `python3 ../../scripts/extract_yplus_surface.py --study orion --cases m6_aoa0`; this writes `orion_yplus.vtp` and `yplus_summary.csv`.
+7. Export lighter ParaView-ready flow slices with `python3 ../../scripts/export_flow_slices.py` when you want `xy` and `xz` planes without opening the full 3D field locally.
+8. Compare adjacent refinement shock surfaces over their common polar-angle domain with `python3 ../../scripts/compare_shock_surfaces.py`; it writes `data/shock_surface_deviation_refinement.csv`.
+9. Check shock-extractor spacing sensitivity on one fixed field with `python3 ../../scripts/shock_extraction_convergence.py m6_medium`; outputs stay under that case's `shock_extraction_convergence/` folder.
+10. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout. By default it writes into `data/cases/`; set `LOCAL_CASES_DIR` only if you want a different destination.
 
 ## Notes
 
@@ -35,20 +37,21 @@
 - Solver walltimes follow mesh level: coarse `04:00:00`, medium `05:00:00`,
   fine `11:00:00`, and very fine `18:00:00`.
   All cases use `CONV_STARTITER=10000` so residual-only convergence cannot stop
-  the solver before the flow has had time to develop. Mach 9 cases use adaptive
-  CFL from `0.005` up to `0.05`, `CONV_STARTITER=30000`, and `24:00:00`
+  the solver before the flow has had time to develop. Mach 9 cases use a fixed
+  CFL of `0.005`, `CONV_STARTITER=30000`, and `24:00:00`
   solver walltime. `m6_coarse` and `m9_coarse` are excluded from the managed
   case list.
-- The postprocess chain is submitted as separate dependent jobs. Mirror, slice,
-  and shock-extraction walltimes are configured per mesh level in `study.toml`.
+- The postprocess chain is submitted as separate dependent jobs. Wall y+, mirror,
+  slice, and shock-extraction walltimes are configured per mesh level in `study.toml`.
   Current mirror walltimes are `00:15:00` for all mesh levels; submit only on
   partitions that allow
   the configured minimum walltime.
-- Postprocess reruns are resumable by output presence: completed `flow_full.vtu`,
-  flow slices, and shock-surface files are kept, while the first missing step is rerun.
+- Postprocess reruns are resumable by output presence: completed wall y+ files,
+  `flow_full.vtu`, flow slices, and shock-surface files are kept, while the first
+  missing step is rerun.
 - Runtime timing rows are appended to `data/cases/<case>/logs/workflow_timings.csv`
   and the aggregate `data/workflow_timings.csv`. Use those measured solver, mirror,
-  slice, and shock times to tighten the mesh-level walltime overrides.
+  y+, mirror, slice, and shock times to tighten the mesh-level walltime overrides.
 - `submit_workflow.py` can run interactively, or non-interactively with flags such as
   `--dry-run --cases m1p5_medium,m1p5_fine --full-workflow`.
 - Add the symmetric coarse mesh as `meshes/coarse.su2` before adding `coarse` to the

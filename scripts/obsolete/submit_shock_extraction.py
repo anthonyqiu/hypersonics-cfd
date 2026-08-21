@@ -9,15 +9,17 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from case_selection import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from hypersonics_cfd.cases import (
     choose_postprocess_cases_interactively,
     deduplicate_case_names,
     prompt_with_default,
     prompt_yes_no,
     resolve_case_path,
 )
-from layout import choose_study_paths_interactively
-from slurm_helpers import command_string, submit_sbatch
+from hypersonics_cfd.study import choose_study_paths_interactively
+from hypersonics_cfd.workflow.slurm import command_string, submit_sbatch
 
 
 DEFAULT_FLOW_FILENAME = os.environ.get("CFD_FLOW_FILE", "flow_full.vtu").strip() or "flow_full.vtu"

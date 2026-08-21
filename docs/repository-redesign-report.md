@@ -4,6 +4,10 @@ Historical note: this report documents an earlier repository cleanup. The curren
 workflow is symmetric-only: active cases and active meshes use clean names, and obsolete case data is grouped under
 `studies/orion/data/obsolete/`.
 
+The current Python architecture has since moved reusable implementation into
+`src/hypersonics_cfd/`. Stable commands remain under `scripts/` as thin entry
+points, so existing local and SLURM commands are unchanged.
+
 ## Objective
 
 This redesign turns the repository from a single mixed-use `orion/` working folder into a reusable campaign repo with a clear split between:
@@ -19,7 +23,8 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ### High-level restructuring
 
-- Consolidated the active Python workflow under `scripts/` so there is one canonical home for each tool instead of a wrapper layer plus a second source tree.
+- Consolidated reusable Python code under the `hypersonics_cfd` package and kept
+  command entry points under `scripts/`.
 - Moved the Orion case matrix to `studies/orion/study.toml`.
 - Moved shared templates to `templates/su2/` and `templates/slurm/`.
 - Moved Orion geometry into `studies/orion/geometry/`.
@@ -31,13 +36,15 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ### Functional improvements
 
-- Added a shared path model in `scripts/layout.py`.
+- Added a shared path model in `src/hypersonics_cfd/study.py`.
 - Flattened the study path model so template paths now live directly on `StudyPaths` instead of under a nested `templates` object.
 - Made case generation study-aware instead of hard-coding the old `orion/` tree.
 - Normalized mesh naming throughout the managed workflow.
 - Retired the old rectangular shock extractor so the repo now supports one maintained shock-surface workflow.
-- Kept the supported shock extractor implementation directly in `scripts/extract_shock_surface.py` so it is not split across wrapper and library copies.
-- Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that auto-detects the remote case root and copies selected files into local per-case folders without an intermediate export bundle.
+- Split the maintained shock implementation by responsibility under
+  `src/hypersonics_cfd/shock/`; `scripts/extract_shock_surface.py` is the stable
+  command entry point.
+- Added `scripts/pull_cluster_results.sh` as a direct `ssh/scp` helper that copies selected files into local per-case folders without an intermediate export bundle.
 - Collapsed separate shock batch submission into the combined solver/postprocess workflow.
 - Made generated SU2 configs use explicit mesh and case-output paths so solver outputs always land in `studies/<campaign>/data/cases/<case>/` even though configs are stored under `build/`.
 
@@ -46,7 +53,8 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 ### Repository root
 
 - `docs/`: repo-level documentation, including this report.
-- `scripts/`: the single home for the active Python workflow plus shell helpers.
+- `src/hypersonics_cfd/`: reusable workflow, post-processing, and shock code.
+- `scripts/`: stable command entry points plus shell helpers.
 - `studies/`: campaign-specific source-controlled content.
 - `templates/`: shared SU2 and SLURM templates.
 
@@ -61,18 +69,30 @@ The redesign was done on branch `repo-structure-redesign` so the previous layout
 
 ## Script inventory
 
-### Active tools in `scripts/`
+### Active commands in `scripts/`
 
 - `setup_cases.py`: renders managed SU2 configs and removes stale local per-case files.
 - `submit_workflow.py`: builds or submits solver plus dependent mirror, slice, and shock SLURM jobs.
 - `extract_shock_surface.py`: runs the supported panel-based 3D shock-surface extractor.
 - `export_initial_search_line.py`: exports the coarse/refined stagnation search-line profile used to debug shock-sensor smoothing and peak picking.
 - `export_flow_slices.py`: writes ParaView-ready `xy` and `xz` flow slices so local machines can inspect lighter files instead of opening full 3D fields.
+- `extract_yplus_surface.py`: writes the full Orion wall surface and area-weighted y+ statistics.
 - `check_convergence.py`: checks `history.csv` residuals against a target threshold.
+- `compare_shock_surfaces.py`: compares adjacent refinement shock surfaces over their shared angular domain.
+- `shock_extraction_convergence.py`: checks extractor spacing sensitivity on one fixed CFD field.
+- `workflow_status.py` and `workflow_timing.py`: report workflow state and record per-step runtimes.
 - `pull_cluster_results.sh`: interactive local-machine helper for copying selected result files directly from cluster case folders into local case folders.
-- `case_selection.py`: shared case discovery, filtering, deduplication, and path resolution helpers.
-- `layout.py`: central study/repo path model.
-- `extract_shock_surface.py` also contains the AoA parsing and coordinate-frame helpers it uses, so the maintained shock workflow lives in one file instead of two.
+
+Obsolete commands import the package directly. The old `case_selection.py`,
+`layout.py`, and `slurm_helpers.py` compatibility shims have been removed.
+
+### Reusable modules in `src/hypersonics_cfd/`
+
+- `study.py` and `cases.py`: paths, case discovery, filtering, and aliases.
+- `workflow/`: setup, submission, status, timing, and Slurm helpers.
+- `postprocess/`: convergence checks, mirroring, flow slices, and wall y+.
+- `shock/`: coordinate frame, sensor peak selection, extraction, diagnostics,
+  output, extractor studies, and surface comparison.
 
 ## Why the new structure is better
 
@@ -82,7 +102,8 @@ The old layout mixed templates, scripts, generated configs, case outputs, logs, 
 
 The new layout gives each category one home:
 
-- workflow code lives in `scripts/`
+- workflow code lives in `src/hypersonics_cfd/`
+- stable commands live in `scripts/`
 - shared templates live in `templates/`
 - campaign metadata lives in `studies/<campaign>/`
 - heavy outputs live in `studies/<campaign>/data/`

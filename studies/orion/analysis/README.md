@@ -5,6 +5,6 @@
 - `plot_residuals.m`, `plot_shock.m`, and `calcs.m`: interactive MATLAB helpers used during analysis.
 - `plot_initial_search_line.m`: MATLAB viewer for the coarse/refined stagnation search-line profile exported by `python3 scripts/export_initial_search_line.py`.
 - `plot_search_line_diagnostics.m`: MATLAB viewer for the initial search line plus all exported terminated search lines, plotted against the local `n` coordinate.
-- `plot_shock_surface_deviation.m`: MATLAB viewer for the pairwise mesh-refinement shock-surface deviation table exported by `python3 scripts/compare_shock_surfaces.py --study orion`.
+- `plot_shock_surface_deviation.m`: MATLAB viewer for the adjacent mesh-refinement common-support deviation table exported by `python3 scripts/compare_shock_surfaces.py`.
 - `orion_case_helpers.m`: shared case discovery, menu, and label helpers used by the MATLAB plotting scripts.
 - `mesh_refinement_analysis.xlsx`: lightweight study spreadsheet for mesh-refinement review.

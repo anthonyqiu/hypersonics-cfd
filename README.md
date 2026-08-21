@@ -7,7 +7,11 @@ Reusable workflows for hypersonic CFD campaigns, with study definitions in Git a
 ```text
 hypersonics-cfd/
   docs/                     # design notes and migration reports
-  scripts/                  # Python workflow code, shell helpers, and retired tools under obsolete/
+  scripts/                  # thin command entry points and retired tools under obsolete/
+  src/hypersonics_cfd/      # reusable workflow, post-processing, and shock modules
+    shock/                  # frames, sensors, extraction, comparison, and diagnostics
+    postprocess/            # convergence, mirroring, slices, and wall y+
+    workflow/               # case setup, submission, status, timing, and Slurm helpers
   studies/
     orion/                  # one concrete campaign
       study.toml            # case matrix and study defaults
@@ -24,7 +28,8 @@ hypersonics-cfd/
 
 ## Design principles
 
-- Keep the active workflow code in `scripts/` so each Python tool has one canonical home.
+- Keep reusable implementation in the `hypersonics_cfd` package and keep
+  `scripts/` as stable, short command entry points.
 - Keep study-specific metadata and canonical inputs under `studies/<campaign>/`.
 - Keep generated configs under `studies/<campaign>/build/`.
 - Keep active solver outputs, restart files, per-case solver logs, and derived artifacts under `studies/<campaign>/data/cases/`.
@@ -42,7 +47,7 @@ Preview or stage case configs:
 python3 scripts/setup_cases.py
 ```
 
-Dry-run the end-to-end symmetric workflow (solver -> mirror -> slices -> shock extraction):
+Dry-run the end-to-end symmetric workflow (solver -> wall y+ -> mirror -> slices -> shock extraction):
 
 ```bash
 python3 scripts/submit_workflow.py
@@ -52,7 +57,7 @@ Dry-run or submit specific cases without prompts:
 
 ```bash
 python3 scripts/submit_workflow.py --dry-run --cases m1p5_medium,m1p5_fine --full-workflow
-python3 scripts/submit_workflow.py --submit --cases m1p5_medium --solver --mirror --slices --shock
+python3 scripts/submit_workflow.py --submit --cases m1p5_medium --solver --yplus --mirror --slices --shock
 ```
 
 Check managed workflow status:
@@ -104,10 +109,24 @@ Export ParaView-ready `xy` and `xz` flow slices on the cluster:
 python3 scripts/export_flow_slices.py
 ```
 
-Compare extracted refinement-study shock surfaces with normalized symmetric surface distances:
+Extract the full Orion wall surface colored by y+ and write summary statistics:
 
 ```bash
-python3 scripts/compare_shock_surfaces.py --study orion
+python3 scripts/extract_yplus_surface.py --study orion --cases m6_aoa0
+```
+
+Compare adjacent refinement-study shock surfaces over their shared polar-angle domain:
+
+```bash
+python3 scripts/compare_shock_surfaces.py
+```
+
+Run an extractor-spacing study on one fixed flow field. The five trial surfaces
+and two summary tables are written under the case's `shock_extraction_convergence/`
+folder, leaving the production shock surface untouched:
+
+```bash
+python3 scripts/shock_extraction_convergence.py m6_medium
 ```
 
 Pull selected results directly from the cluster to a local machine:
@@ -120,6 +139,8 @@ When run from a local checkout, the script now defaults to `studies/orion/data/c
 
 ## Documentation
 
+- [System tutorial](docs/system-tutorial.md)
 - [Repository redesign report](docs/repository-redesign-report.md)
 - [Shock extraction notes](docs/shock-extraction-notes.md)
+- [Shock-surface deviation method](docs/shock-surface-deviation.md)
 - [Orion study guide](studies/orion/README.md)

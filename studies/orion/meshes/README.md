@@ -26,3 +26,7 @@ self-similar in the strict grid-convergence sense. This is usually defensible
 when the target quantity is shock shape, shock location, or stand-off distance,
 but wall heat flux, skin friction, and other boundary-layer quantities should be
 checked with a dedicated near-wall refinement/y-plus assessment.
+
+Run `python3 scripts/extract_yplus_surface.py --study orion --cases <case>` from
+the repository root to create a full-body `orion_yplus.vtp` for ParaView and an
+area-weighted `yplus_summary.csv` in the selected case folder.

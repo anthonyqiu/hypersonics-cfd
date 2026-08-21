@@ -4,16 +4,17 @@ set -euo pipefail
 study_name="${1:-}"
 case_name="${2:-}"
 flow_file="${3:-flow_full.vtu}"
-run_mirror="${4:-1}"
-overwrite_outputs="${5:-0}"
-run_slices="${6:-1}"
-run_shock="${7:-1}"
+run_yplus="${4:-1}"
+run_mirror="${5:-1}"
+overwrite_outputs="${6:-0}"
+run_slices="${7:-1}"
+run_shock="${8:-1}"
 
 if [[ -z "$study_name" || -z "$case_name" ]]; then
-    echo "Usage: $0 <study-name> <case-name> [flow-file] [run-mirror: 0|1] [overwrite-outputs: 0|1] [run-slices: 0|1] [run-shock: 0|1]" >&2
+    echo "Usage: $0 <study-name> <case-name> [flow-file] [run-yplus: 0|1] [run-mirror: 0|1] [overwrite-outputs: 0|1] [run-slices: 0|1] [run-shock: 0|1]" >&2
     exit 2
 fi
-for flag_name in run_mirror overwrite_outputs run_slices run_shock; do
+for flag_name in run_yplus run_mirror overwrite_outputs run_slices run_shock; do
     flag_value="${!flag_name}"
     if [[ "$flag_value" != "0" && "$flag_value" != "1" ]]; then
         echo "$flag_name must be 0 or 1." >&2
@@ -115,11 +116,38 @@ echo "CPUs/task:  ${SLURM_CPUS_PER_TASK:-local}"
 echo "Study:      $study_name"
 echo "Case:       $case_name"
 echo "Flow file:  $flow_file"
+echo "Y plus:     $run_yplus"
 echo "Mirror:     $run_mirror"
 echo "Slices:     $run_slices"
 echo "Shock:      $run_shock"
 echo "Overwrite:  $overwrite_outputs"
 echo "Threads:    $thread_count"
+
+yplus_step() {
+    echo
+    echo "=== Extracting Orion surface y+ ==="
+    local restart_path="$case_path/restart_flow.dat"
+    local surface_path="$case_path/surface_flow.vtu"
+    local input_path="$restart_path"
+    if ! complete_file "$restart_path"; then
+        input_path="$surface_path"
+    elif complete_file "$surface_path" && [[ "$surface_path" -nt "$restart_path" ]]; then
+        input_path="$surface_path"
+    fi
+    if ! complete_file "$input_path"; then
+        echo "No restart or surface solution found in $case_path" >&2
+        TIMING_STEP_NOTE="missing restart_flow.dat and surface_flow.vtu"
+        return 2
+    fi
+    if outputs_fresh_for_input "$input_path" "$case_path/orion_yplus.vtp" "$case_path/yplus_summary.csv" && [[ "$overwrite_outputs" != "1" ]]; then
+        echo "Keeping existing orion_yplus.vtp and yplus_summary.csv"
+        TIMING_STEP_STATUS="skipped"
+        TIMING_STEP_NOTE="y+ outputs already exist"
+    else
+        CFD_STUDY="$study_name" CFD_CASE="$case_name" \
+            python3 scripts/extract_yplus_surface.py
+    fi
+}
 
 mirror_step() {
     echo
@@ -139,8 +167,7 @@ mirror_step() {
         final_path="$case_path/flow_full.vtu"
         rm -f "$partial_path"
         python3 scripts/mirror_sym_flow.py "$case_path" \
-            --output-name "$partial_name" \
-            --overwrite
+            --output-name "$partial_name"
         mv -f "$partial_path" "$final_path"
         echo "Completed:  $final_path"
     fi
@@ -181,6 +208,10 @@ shock_step() {
             python3 scripts/extract_shock_surface.py
     fi
 }
+
+if [[ "$run_yplus" == "1" ]]; then
+    run_timed_step yplus yplus_step
+fi
 
 if [[ "$run_mirror" == "1" ]]; then
     run_timed_step mirror mirror_step

@@ -38,6 +38,7 @@ job_account = "rrg-jphickey"
 
 postprocess_job_cpus_per_task = 1
 postprocess_job_mem = ""
+yplus_job_time = "00:15:00"
 mirror_job_time = "00:15:00"
 slices_job_time = "00:15:00"
 shock_job_time = "01:00:00"
@@ -53,6 +54,7 @@ marker_heatflux = "( ORION_SURFACE, 0.0 )"
 marker_far = "( FARFIELD )"
 marker_sym = "( SYMMETRY )"
 marker_monitoring = "( ORION_SURFACE )"
+marker_plotting = "( ORION_SURFACE )"
 
 [generation]
 exclude_cases = ["m6_coarse", "m9_coarse"]
@@ -99,7 +101,7 @@ cfl_adapt_param = "(0.5, 1.1, 0.05, 0.5)"
 [profiles.m9]
 mach_number = "9"
 reynolds_number = "1.029342800042823E09"
-cfl_adapt = true
+cfl_adapt = false
 cfl_number = "0.005"
 cfl_adapt_param = "(0.5, 1.05, 0.005, 0.05)"
 
@@ -146,6 +148,7 @@ cfl_adapt_param = "(0.5, 1.05, 0.005, 0.05)"
 name = "coarse mesh walltime"
 match_mesh_level = ["coarse"]
 job_time = "04:00:00"
+yplus_job_time = "00:15:00"
 mirror_job_time = "00:15:00"
 slices_job_time = "00:15:00"
 shock_job_time = "00:30:00"
@@ -154,6 +157,7 @@ shock_job_time = "00:30:00"
 name = "medium mesh walltime"
 match_mesh_level = ["medium"]
 job_time = "05:00:00"
+yplus_job_time = "00:15:00"
 mirror_job_time = "00:15:00"
 slices_job_time = "00:15:00"
 shock_job_time = "02:00:00"
@@ -162,6 +166,7 @@ shock_job_time = "02:00:00"
 name = "fine mesh walltime"
 match_mesh_level = ["fine"]
 job_time = "11:00:00"
+yplus_job_time = "00:20:00"
 mirror_job_time = "00:15:00"
 slices_job_time = "00:15:00"
 shock_job_time = "01:30:00"
@@ -170,6 +175,7 @@ shock_job_time = "01:30:00"
 name = "very fine mesh walltime"
 match_mesh_level = ["very_fine"]
 job_time = "18:00:00"
+yplus_job_time = "00:30:00"
 mirror_job_time = "00:15:00"
 slices_job_time = "00:15:00"
 shock_job_time = "05:00:00"
@@ -178,8 +184,14 @@ shock_job_time = "05:00:00"
 name = "m9 solver stability"
 match_mach = ["9"]
 restart_sol = false
-conv_startiter = 30000
+conv_startiter = 20000
 job_time = "24:00:00"
+
+[[overrides]]
+name = "restart healthy m9 AoA continuations"
+match_study = ["aoa"]
+match_mach = ["9"]
+restart_sol = true
 
 [[overrides]]
 name = "restart timed-out fine refinement continuations"
