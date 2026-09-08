@@ -18,14 +18,15 @@ fi
 
 case "$preset" in
     history) files=("history.csv") ;;
+    residuals) files=("history.csv" "residual_history.svg") ;;
     flow) files=("flow_full.vtu") ;;
     shock) files=("shock_surface.csv" "shock_surface.vtp") ;;
     slices) files=("flow_slice_xy.vtp" "flow_slice_xz.vtp") ;;
     yplus) files=("orion_yplus.vtp" "yplus_summary.csv") ;;
     diagnostics) files=("initial_search_line_profile.csv" "terminated_search_line_summary.csv" "terminated_search_line_profiles.csv") ;;
     timing) files=("logs/workflow_timings.csv") ;;
-    light) files=("history.csv" "surface_flow.vtu" "shock_surface.csv" "shock_surface.vtp" "flow_slice_xy.vtp" "flow_slice_xz.vtp" "orion_yplus.vtp" "yplus_summary.csv" "logs/workflow_timings.csv") ;;
-    all) files=("history.csv" "flow.vtu" "flow_full.vtu" "surface_flow.vtu" "shock_surface.csv" "shock_surface.vtp" "flow_slice_xy.vtp" "flow_slice_xz.vtp" "orion_yplus.vtp" "yplus_summary.csv" "logs/workflow_timings.csv") ;;
+    light) files=("history.csv" "residual_history.svg" "surface_flow.vtu" "shock_surface.csv" "shock_surface.vtp" "flow_slice_xy.vtp" "flow_slice_xz.vtp" "orion_yplus.vtp" "yplus_summary.csv" "logs/workflow_timings.csv") ;;
+    all) files=("history.csv" "residual_history.svg" "flow.vtu" "flow_full.vtu" "surface_flow.vtu" "shock_surface.csv" "shock_surface.vtp" "flow_slice_xy.vtp" "flow_slice_xz.vtp" "orion_yplus.vtp" "yplus_summary.csv" "logs/workflow_timings.csv") ;;
     *) IFS=',' read -ra files <<< "$preset" ;;
 esac
 

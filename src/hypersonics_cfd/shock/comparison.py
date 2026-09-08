@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import csv
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pyvista as pv
@@ -248,7 +250,55 @@ def compare_refinement_surfaces(
     return rows
 
 
+def compare_surface_pair(
+    surface_a_path,
+    surface_b_path,
+    output_path,
+    diameter=5.0,
+    theta_limit_degrees=None,
+):
+    polar_limit = None
+    if theta_limit_degrees is not None:
+        polar_limit = np.full(360, np.radians(theta_limit_degrees))
+    metrics = common_polar_metrics(
+        pv.read(surface_a_path),
+        pv.read(surface_b_path),
+        diameter=diameter,
+        polar_limit=polar_limit,
+    )
+    row = {
+        "surface_a": str(surface_a_path),
+        "surface_b": str(surface_b_path),
+        **metrics,
+    }
+    with Path(output_path).open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=row)
+        writer.writeheader()
+        writer.writerow(row)
+    print(f"RMS/D = {metrics['common_rms_over_D']:.6g}")
+    print(f"stand-off/D = {metrics['standoff_difference_over_D']:.6g}")
+    print(f"wrote {output_path}")
+    return row
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("surface_a", nargs="?")
+    parser.add_argument("surface_b", nargs="?")
+    parser.add_argument("--output", default="shock_surface_deviation.csv")
+    parser.add_argument("--diameter", type=float, default=5.0)
+    parser.add_argument("--theta-limit", type=float)
+    args = parser.parse_args()
+    if args.surface_a:
+        compare_surface_pair(
+            args.surface_a,
+            args.surface_b,
+            args.output,
+            args.diameter,
+            args.theta_limit,
+        )
+        return
+
     paths = get_study_paths("orion")
     with (paths.study_root / "geometry" / "orion_profile_xy.csv").open() as file:
         profile = list(csv.DictReader(file))

@@ -24,7 +24,8 @@
 7. Export lighter ParaView-ready flow slices with `python3 ../../scripts/export_flow_slices.py` when you want `xy` and `xz` planes without opening the full 3D field locally.
 8. Compare adjacent refinement shock surfaces over their common polar-angle domain with `python3 ../../scripts/compare_shock_surfaces.py`; it writes `data/shock_surface_deviation_refinement.csv`.
 9. Check shock-extractor spacing sensitivity on one fixed field with `python3 ../../scripts/shock_extraction_convergence.py m6_medium`; outputs stay under that case's `shock_extraction_convergence/` folder.
-10. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout. By default it writes into `data/cases/`; set `LOCAL_CASES_DIR` only if you want a different destination.
+10. Plot the recoverable continuous residual history with `python3 ../../scripts/plot_residuals.py m9_aoa32`; it writes `residual_history.svg` inside the case folder and marks solver restarts.
+11. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout. By default it writes into `data/cases/`; set `LOCAL_CASES_DIR` only if you want a different destination.
 
 ## Notes
 

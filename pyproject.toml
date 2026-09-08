@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Reusable workflows for hypersonic CFD studies and case databases"
 requires-python = ">=3.11"
 dependencies = [
+  "matplotlib",
   "numpy",
   "pyvista",
   "scipy",

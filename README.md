@@ -91,6 +91,15 @@ Check convergence interactively:
 python3 scripts/check_convergence.py
 ```
 
+Plot the continuous residual history recovered from solver logs and checkpoints:
+
+```bash
+python3 scripts/plot_residuals.py m9_aoa32
+```
+
+The SVG is written to `studies/orion/data/cases/<case>/residual_history.svg` and
+shows every raw iteration.
+
 Export the coarse/refined initial stagnation search-line profile for smoothing diagnostics:
 
 ```bash
