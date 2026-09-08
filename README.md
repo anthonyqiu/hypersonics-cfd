@@ -60,6 +60,13 @@ python3 scripts/submit_workflow.py --dry-run --cases m1p5_medium,m1p5_fine --ful
 python3 scripts/submit_workflow.py --submit --cases m1p5_medium --solver --yplus --mirror --slices --shock
 ```
 
+Submit repeated solver continuations and archive each resulting flow field before
+the next run starts:
+
+```bash
+python3 scripts/submit_workflow.py --submit --cases m9_aoa0,m9_aoa15 --solver --resubmit-existing --continuations 2
+```
+
 Check managed workflow status:
 
 ```bash

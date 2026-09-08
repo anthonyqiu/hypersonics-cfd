@@ -11,13 +11,21 @@ def command_string(command: list[str]) -> str:
     return " ".join(str(part) for part in command)
 
 
-def add_afterok_dependency(command: list[str], job_ids: list[str]) -> list[str]:
+def add_dependency(command: list[str], job_ids: list[str], condition: str) -> list[str]:
     clean_job_ids = [str(job_id).strip() for job_id in job_ids if str(job_id).strip()]
     if not clean_job_ids:
         return list(command)
     updated = list(command)
-    updated[1:1] = ["--dependency", "afterok:" + ":".join(clean_job_ids)]
+    updated[1:1] = ["--dependency", condition + ":" + ":".join(clean_job_ids)]
     return updated
+
+
+def add_afterok_dependency(command: list[str], job_ids: list[str]) -> list[str]:
+    return add_dependency(command, job_ids, "afterok")
+
+
+def add_afterany_dependency(command: list[str], job_ids: list[str]) -> list[str]:
+    return add_dependency(command, job_ids, "afterany")
 
 
 def parse_sbatch_job_id(stdout: str) -> str:

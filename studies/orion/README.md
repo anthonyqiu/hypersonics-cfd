@@ -27,6 +27,11 @@
 10. Plot the recoverable continuous residual history with `python3 ../../scripts/plot_residuals.py m9_aoa32`; it writes `residual_history.svg` inside the case folder and marks solver restarts.
 11. Pull selected results to your laptop with `bash ../../scripts/pull_cluster_results.sh` from a local checkout. By default it writes into `data/cases/`; set `LOCAL_CASES_DIR` only if you want a different destination.
 
+Use `--continuations 2` with `--solver --resubmit-existing` to chain two solver
+runs. Each solver is followed by an archival job that stores `history.csv`,
+`flow.vtu`, and `restart_flow.dat` in a cumulative-iteration checkpoint before
+the next continuation starts.
+
 ## Notes
 
 - The AoA campaign uses the active `very_fine.su2` symmetric mesh. The refinement

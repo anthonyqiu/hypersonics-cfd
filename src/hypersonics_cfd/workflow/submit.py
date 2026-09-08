@@ -20,7 +20,12 @@ from hypersonics_cfd.study import (
 )
 
 from .setup import load_case_setup, stage_case
-from .slurm import add_afterok_dependency, command_string, submit_sbatch
+from .slurm import (
+    add_afterany_dependency,
+    add_afterok_dependency,
+    command_string,
+    submit_sbatch,
+)
 
 
 HALF_FLOW_FILENAME = "flow.vtu"
@@ -154,6 +159,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run solver, y+ extraction, mirror, slices, and shock.",
     )
     parser.add_argument("--solver", action="store_true", help="Include the solver step.")
+    parser.add_argument(
+        "--continuations",
+        type=int,
+        default=1,
+        help="Number of sequential solver runs, archiving each result before the next.",
+    )
     parser.add_argument("--yplus", action="store_true", help="Include Orion surface y+ extraction.")
     parser.add_argument("--mirror", action="store_true", help="Include the mirror step.")
     parser.add_argument("--slices", action="store_true", help="Include the flow-slice export step.")
@@ -279,6 +290,54 @@ def build_solver_command(paths: StudyPaths, spec: dict[str, object], case_dir: P
         str(paths.run_case_script),
         str(paths.generated_config_path(case_name)),
     ]
+
+
+def cumulative_iterations(case_dir: Path) -> int:
+    state_file = case_dir / "cumulative_iteration.txt"
+    if state_file.exists():
+        return int(state_file.read_text().strip())
+    from hypersonics_cfd.postprocess.residual_plot import continuation_chain
+
+    return sum(
+        int(segment.iteration[-1] - segment.iteration[0])
+        for segment in continuation_chain(case_dir)
+    )
+
+
+def build_checkpoint_command(
+    paths: StudyPaths,
+    spec: dict[str, object],
+    case_dir: Path,
+    base_iteration: int | None,
+) -> list[str]:
+    command = [
+        "sbatch",
+        "--export=NONE",
+        "--get-user-env=L",
+        "--job-name",
+        f"checkpoint_{spec['case_name']}",
+        "--nodes",
+        "1",
+        "--ntasks",
+        "1",
+        "--cpus-per-task",
+        "1",
+        "--time",
+        "00:30:00",
+        "--account",
+        str(spec["job_account"]),
+        "--output",
+        str(case_dir / "logs" / "solver" / "checkpoint_%j.out"),
+        "--error",
+        str(case_dir / "logs" / "solver" / "checkpoint_%j.err"),
+        "--chdir",
+        str(paths.repo_root),
+        str(paths.repo_root / "templates" / "slurm" / "archive_continuation_checkpoint.sh"),
+        str(case_dir),
+    ]
+    if base_iteration is not None:
+        command.append(str(base_iteration))
+    return command
 
 
 def postprocess_flags_for_step(
@@ -551,6 +610,7 @@ def main() -> int:
             raise SystemExit(f"Missing workflow file: {mirror_script}")
 
     planned_solver = 0
+    planned_checkpoint = 0
     planned_post = {step: 0 for step in POSTPROCESS_STEPS}
     already_complete = 0
     skipped = 0
@@ -573,10 +633,34 @@ def main() -> int:
             if submit_jobs:
                 stage_case(paths, spec, template_text)
                 paths.ensure_case_runtime_dirs(case_name)
-            solver_command = build_solver_command(paths, spec, case_dir)
-            solver_job = submit_or_print(solver_command, submit_jobs=submit_jobs, label=f"{case_name}: solver")
-            dependencies = [solver_job]
-            planned_solver += 1
+            base_iteration = cumulative_iterations(case_dir) if args.continuations > 1 else None
+            for run_index in range(1, args.continuations + 1):
+                solver_command = build_solver_command(paths, spec, case_dir)
+                solver_command = add_afterok_dependency(solver_command, dependencies)
+                solver_job = submit_or_print(
+                    solver_command,
+                    submit_jobs=submit_jobs,
+                    label=f"{case_name}: solver {run_index}/{args.continuations}",
+                )
+                planned_solver += 1
+
+                if args.continuations > 1:
+                    checkpoint_command = build_checkpoint_command(
+                        paths,
+                        spec,
+                        case_dir,
+                        base_iteration if run_index == 1 else None,
+                    )
+                    checkpoint_command = add_afterany_dependency(checkpoint_command, [solver_job])
+                    checkpoint_job = submit_or_print(
+                        checkpoint_command,
+                        submit_jobs=submit_jobs,
+                        label=f"{case_name}: checkpoint {run_index}/{args.continuations}",
+                    )
+                    dependencies = [checkpoint_job]
+                    planned_checkpoint += 1
+                else:
+                    dependencies = [solver_job]
         elif run_solver:
             skipped += 1
 
@@ -633,7 +717,8 @@ def main() -> int:
     post_summary = ", ".join(f"{step}={planned_post[step]}" for step in POSTPROCESS_STEPS)
     print()
     print(
-        f"Summary: {mode} solver={planned_solver}, postprocess({post_summary}), "
+        f"Summary: {mode} solver={planned_solver}, checkpoints={planned_checkpoint}, "
+        f"postprocess({post_summary}), "
         f"already_complete={already_complete}, skipped={skipped}"
     )
     return 0
