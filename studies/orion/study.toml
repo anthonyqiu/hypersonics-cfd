@@ -15,6 +15,9 @@ author = "Anthony Qiu"
 institution = "University of Waterloo"
 config_date = "2026-03-14"
 restart_sol = false
+turbulence_model = "SA"
+freestream_turbulence_intensity = "0.05"
+freestream_turb2lam_visc_ratio = "10.0"
 output_wrt_freq = 150
 freestream_temperature = 288.15
 reynolds_length = 5
@@ -57,7 +60,7 @@ marker_monitoring = "( ORION_SURFACE )"
 marker_plotting = "( ORION_SURFACE )"
 
 [generation]
-exclude_cases = ["m6_coarse", "m9_coarse"]
+exclude_cases = []
 
 [generation.studies.aoa]
 mach_profiles = ["m1p5", "m3", "m6", "m9"]
@@ -70,6 +73,30 @@ mach_profiles = ["m1p5", "m3", "m6", "m9"]
 aoa = 0
 mesh_levels = ["coarse", "medium", "fine", "very_fine"]
 case_name_pattern = "m{mach}_{mesh_level}"
+
+[generation.studies.cfl_diagnostic]
+mach_profiles = ["m9"]
+aoa = 32
+mesh_level = "very_fine"
+case_name_pattern = "m{mach}_aoa{aoa}_cfl0p01"
+
+[generation.studies.cfl_0p05_diagnostic]
+mach_profiles = ["m9"]
+aoa = 32
+mesh_level = "very_fine"
+case_name_pattern = "m{mach}_aoa{aoa}_cfl0p05"
+
+[generation.studies.cfl_0p0075_diagnostic]
+mach_profiles = ["m9"]
+aoa = 50
+mesh_level = "very_fine"
+case_name_pattern = "m{mach}_aoa{aoa}_cfl0p0075"
+
+[generation.studies.sst_diagnostic]
+mach_profiles = ["m9"]
+aoa = 50
+mesh_level = "very_fine"
+case_name_pattern = "m{mach}_aoa{aoa}_sst"
 
 [aliases]
 m1p5_very_fine = "m1p5_aoa0"
@@ -104,6 +131,7 @@ reynolds_number = "1.029342800042823E09"
 cfl_adapt = false
 cfl_number = "0.005"
 cfl_adapt_param = "(0.5, 1.05, 0.005, 0.05)"
+volume_output = "MACH, PRESSURE, TEMPERATURE, DENSITY, HEAT_FLUX, Y_PLUS, RESIDUAL"
 
 # Override rules are applied in order, top to bottom.
 # You can override any key already used by the templates.
@@ -192,12 +220,72 @@ name = "restart healthy m9 AoA continuations"
 match_study = ["aoa"]
 match_mach = ["9"]
 restart_sol = true
+cfl_number = "0.05"
+
+[[overrides]]
+name = "m6 coarse fixed CFL continuation"
+match_cases = ["m6_coarse"]
+restart_sol = true
+cfl_adapt = false
+cfl_number = "0.03"
+job_time = "24:00:00"
+
+[[overrides]]
+name = "m9 coarse fixed CFL continuation"
+match_cases = ["m9_coarse"]
+restart_sol = true
+cfl_adapt = false
+cfl_number = "0.001"
+job_time = "24:00:00"
+
+[[overrides]]
+name = "clean m9 medium and fine fixed CFL runs"
+match_cases = ["m9_medium", "m9_fine"]
+restart_sol = false
+cfl_adapt = false
+cfl_number = "0.001"
+job_time = "24:00:00"
 
 [[overrides]]
 name = "restart timed-out fine refinement continuations"
 match_cases = ["m1p5_fine", "m3_fine"]
 restart_sol = true
 job_time = "11:00:00"
+
+[[overrides]]
+name = "m9 AoA 32 CFL 0.01 diagnostic"
+match_cases = ["m9_aoa32_cfl0p01"]
+restart_sol = true
+cfl_adapt = false
+cfl_number = "0.01"
+job_time = "24:00:00"
+
+[[overrides]]
+name = "m9 AoA 32 CFL 0.05 diagnostic"
+match_cases = ["m9_aoa32_cfl0p05"]
+restart_sol = true
+cfl_adapt = false
+cfl_number = "0.05"
+job_time = "24:00:00"
+
+[[overrides]]
+name = "m9 AoA 50 CFL 0.0075 diagnostic"
+match_cases = ["m9_aoa50_cfl0p0075"]
+restart_sol = true
+cfl_adapt = false
+cfl_number = "0.0075"
+job_time = "24:00:00"
+
+[[overrides]]
+name = "fresh m9 AoA 50 SST diagnostic"
+match_cases = ["m9_aoa50_sst"]
+restart_sol = false
+turbulence_model = "SST"
+sst_options = "V2003m"
+cfl_adapt = false
+cfl_number = "0.005"
+screen_output = "(INNER_ITER, WALL_TIME, RMS_DENSITY, RMS_MOMENTUM-X, RMS_MOMENTUM-Y, RMS_MOMENTUM-Z, RMS_ENERGY, RMS_TKE, RMS_DISSIPATION, DRAG)"
+job_time = "24:00:00"
 
 # REFINEMENT OVERIDES
 # [[overrides]]

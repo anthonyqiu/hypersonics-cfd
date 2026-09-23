@@ -339,6 +339,8 @@ def expand_cases(paths: StudyPaths, matrix: dict[str, Any]) -> list[dict[str, An
 
                     sa_options = str(spec.get("sa_options", "")).strip()
                     spec["sa_options_block"] = f"SA_OPTIONS = {sa_options}" if sa_options else ""
+                    sst_options = str(spec.get("sst_options", "")).strip()
+                    spec["sst_options_block"] = f"SST_OPTIONS = {sst_options}" if sst_options else ""
 
                     volume_output = str(spec.get("volume_output", "")).strip()
                     spec["volume_output_block"] = (

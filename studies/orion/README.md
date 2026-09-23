@@ -43,10 +43,24 @@ the next continuation starts.
 - Solver walltimes follow mesh level: coarse `04:00:00`, medium `05:00:00`,
   fine `11:00:00`, and very fine `18:00:00`.
   All cases use `CONV_STARTITER=10000` so residual-only convergence cannot stop
-  the solver before the flow has had time to develop. Mach 9 cases use a fixed
-  CFL of `0.005`, `CONV_STARTITER=30000`, and `24:00:00`
-  solver walltime. `m6_coarse` and `m9_coarse` are excluded from the managed
-  case list.
+  the solver before the flow has had time to develop. Mach 9 AoA continuations
+  use fixed CFL `0.05` after the archived CFL `0.01` solutions,
+  `CONV_STARTITER=20000`, and `24:00:00` solver walltime. The M9 coarse,
+  medium, and fine refinement diagnostics use
+  fixed CFL `0.001`; the M6 coarse diagnostic uses fixed CFL `0.03`.
+- Mach 9 volume files include SU2's `RESIDUAL` output group. The
+  `m9_aoa32_cfl0p01` diagnostic restarts from the production AoA 32 solution at
+  cumulative iteration 51611 and runs for 24 hours at fixed CFL `0.01`.
+  `m9_aoa32_cfl0p05` starts from the archived production AoA 32 restart at
+  cumulative iteration 122646, isolated from the production case, and runs
+  for 24 hours at fixed CFL `0.05`.
+  `m9_aoa50_cfl0p0075` starts from the last clean production AoA 50 checkpoint
+  at cumulative iteration 85933, before the failed CFL `0.01` continuation,
+  and runs for 24 hours at fixed CFL `0.0075`.
+  `m9_aoa50_sst` is an isolated SST-model sensitivity case initialized from
+  freestream at fixed CFL `0.005`; it does not reuse the incompatible SA
+  restart variables. It uses SU2's recommended SST-2003m variant with freestream
+  turbulence intensity `0.05` and turbulent-to-laminar viscosity ratio `10.0`.
 - The postprocess chain is submitted as separate dependent jobs. Wall y+, mirror,
   slice, and shock-extraction walltimes are configured per mesh level in `study.toml`.
   Current mirror walltimes are `00:15:00` for all mesh levels; submit only on

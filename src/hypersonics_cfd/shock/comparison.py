@@ -1,8 +1,5 @@
-from __future__ import annotations
-
 import argparse
 import csv
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -47,82 +44,31 @@ def surface_frame(surface, origin=None, streamwise=None):
     return ShockFrame(np.asarray(origin), streamwise, normal, spanwise)
 
 
-@dataclass
-class PolarSurface:
-    frame: ShockFrame
-    phi: np.ndarray
-    theta: list[np.ndarray]
-    radius: list[np.ndarray]
-    standoff: float
-
-    @classmethod
-    def from_mesh(cls, surface, frame):
-        radius, theta, phi = frame.spherical_coordinates(surface.points)
-        shell = np.asarray(surface["ShellLayer"], dtype=int)
-        ray_index = np.asarray(surface["RayIndex"], dtype=int)
-        standoff = float(radius[shell == 0][0])
-        ray_phi = []
-        ray_theta = []
-        ray_radius = []
-        for ray in np.unique(ray_index[shell > 0]):
-            mask = (ray_index == ray) & (shell > 0)
-            values_theta = np.r_[0.0, theta[mask]]
-            values_radius = np.r_[standoff, radius[mask]]
-            order = np.argsort(values_theta)
-            values_theta, unique = np.unique(
-                values_theta[order], return_index=True
-            )
-            ray_phi.append(np.median(phi[mask]))
-            ray_theta.append(values_theta)
-            ray_radius.append(values_radius[order][unique])
-        return cls(
-            frame,
-            np.asarray(ray_phi),
-            ray_theta,
-            ray_radius,
-            standoff,
-        )
-
-    def theta_limit(self, target_phi):
-        return periodic_interp(
-            self.phi,
-            [theta[-1] for theta in self.theta],
-            target_phi,
-        )
-
-    def sample(self, target_theta, target_phi):
-        ray_values = np.full((len(self.phi), len(target_theta)), np.nan)
-        for index, (theta, radius) in enumerate(zip(self.theta, self.radius)):
-            valid = target_theta <= theta[-1] + 1.0e-12
-            ray_values[index, valid] = np.interp(
-                target_theta[valid], theta, radius
-            )
-        result = np.full((len(target_theta), len(target_phi)), np.nan)
-        for index in range(len(target_theta)):
-            valid = np.isfinite(ray_values[:, index])
-            if np.any(valid):
-                result[index] = periodic_interp(
-                    self.phi[valid],
-                    ray_values[valid, index],
-                    target_phi,
-                )
-        return result
+def surface_theta_limit(surface, frame, target_phi):
+    _, theta, phi = frame.spherical_coordinates(surface.points)
+    shell = np.asarray(surface["ShellLayer"], dtype=int)
+    ray_index = np.asarray(surface["RayIndex"], dtype=int)
+    ray_phi = []
+    ray_theta_max = []
+    for ray in np.unique(ray_index[shell > 0]):
+        mask = (ray_index == ray) & (shell > 0)
+        ray_phi.append(np.median(phi[mask]))
+        ray_theta_max.append(np.max(theta[mask]))
+    return periodic_interp(ray_phi, ray_theta_max, target_phi)
 
 
-def polar_surfaces(surfaces, axis_origin=None, streamwise=None):
-    frame = surface_frame(surfaces[0], axis_origin, streamwise)
-    return [PolarSurface.from_mesh(surface, frame) for surface in surfaces]
-
-
-def shared_polar_limit(
+def shared_theta_limit(
     surfaces,
     phi_count=360,
     axis_origin=None,
     streamwise=None,
 ):
     phi = np.linspace(0.0, 2.0 * np.pi, phi_count, endpoint=False)
-    polar = polar_surfaces(surfaces, axis_origin, streamwise)
-    return np.min([surface.theta_limit(phi) for surface in polar], axis=0)
+    frame = surface_frame(surfaces[0], axis_origin, streamwise)
+    return np.min(
+        [surface_theta_limit(surface, frame, phi) for surface in surfaces],
+        axis=0,
+    )
 
 
 def weighted_percentile(values, weights, fraction):
@@ -134,39 +80,73 @@ def weighted_percentile(values, weights, fraction):
 
 
 def stagnation_standoff(surface, axis_origin=None, streamwise=None):
-    return polar_surfaces([surface], axis_origin, streamwise)[0].standoff
+    frame = surface_frame(surface, axis_origin, streamwise)
+    radius, _, _ = frame.spherical_coordinates(surface.points)
+    shell = np.asarray(surface["ShellLayer"], dtype=int)
+    return float(radius[shell == 0][0])
 
 
-def common_polar_metrics(
+def crop_surface(surface, frame, phi, theta_limit):
+    surface = surface.extract_surface().triangulate().clean()
+    _, theta, point_phi = frame.spherical_coordinates(surface.points)
+    surface["ThetaMargin"] = periodic_interp(phi, theta_limit, point_phi) - theta
+    return (
+        surface.clip_scalar(scalars="ThetaMargin", value=0.0, invert=False)
+        .extract_surface()
+        .triangulate()
+        .clean()
+    )
+
+
+def triangle_samples(surface):
+    sized = surface.compute_cell_sizes(length=False, area=True, volume=False)
+    areas = np.asarray(sized.cell_data["Area"], dtype=float)
+    centers = np.asarray(sized.cell_centers().points, dtype=float)
+    valid = areas > 0.0
+    return centers[valid], areas[valid]
+
+
+def directed_distances(source, target):
+    centers, areas = triangle_samples(source)
+    _, closest = target.find_closest_cell(centers, return_closest_point=True)
+    distances = np.linalg.norm(centers - closest, axis=1)
+    return distances, areas
+
+
+def write_csv(path, rows):
+    with Path(path).open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def common_surface_metrics(
     surface_a,
     surface_b,
     diameter=5.0,
-    theta_count=240,
     phi_count=360,
     axis_origin=None,
     streamwise=None,
-    polar_limit=None,
+    theta_limit=None,
 ):
-    a, b = polar_surfaces(
-        [surface_a, surface_b], axis_origin, streamwise
-    )
+    frame = surface_frame(surface_a, axis_origin, streamwise)
     phi = np.linspace(0.0, 2.0 * np.pi, phi_count, endpoint=False)
-    limit = np.minimum(a.theta_limit(phi), b.theta_limit(phi))
-    if polar_limit is not None:
-        limit = np.minimum(limit, polar_limit)
-    theta = np.linspace(0.0, np.max(limit), theta_count + 1)
-    radius_a = a.sample(theta, phi)
-    radius_b = b.sample(theta, phi)
-    valid = (
-        (theta[:, None] <= limit[None, :] + 1.0e-12)
-        & np.isfinite(radius_a)
-        & np.isfinite(radius_b)
+    limit = np.minimum(
+        surface_theta_limit(surface_a, frame, phi),
+        surface_theta_limit(surface_b, frame, phi),
     )
-    difference = np.abs(radius_a - radius_b)[valid]
-    weights = np.broadcast_to(np.sin(theta)[:, None], valid.shape)[valid]
-    weights = np.maximum(weights, np.finfo(float).eps)
+    if theta_limit is not None:
+        limit = np.minimum(limit, theta_limit)
+    cropped_a = crop_surface(surface_a, frame, phi, limit)
+    cropped_b = crop_surface(surface_b, frame, phi, limit)
+    distances_a, areas_a = directed_distances(cropped_a, cropped_b)
+    distances_b, areas_b = directed_distances(cropped_b, cropped_a)
+    difference = np.r_[distances_a, distances_b]
+    weights = np.r_[areas_a, areas_b]
     mean = np.average(difference, weights=weights)
     rms = np.sqrt(np.average(difference**2, weights=weights))
+    standoff_a = stagnation_standoff(surface_a, axis_origin, streamwise)
+    standoff_b = stagnation_standoff(surface_b, axis_origin, streamwise)
     return {
         "common_mean_over_D": mean / diameter,
         "common_rms_over_D": rms / diameter,
@@ -175,10 +155,9 @@ def common_polar_metrics(
         )
         / diameter,
         "common_max_over_D": np.max(difference) / diameter,
-        "standoff_a_over_D": a.standoff / diameter,
-        "standoff_b_over_D": b.standoff / diameter,
-        "standoff_difference_over_D": abs(a.standoff - b.standoff)
-        / diameter,
+        "standoff_a_over_D": standoff_a / diameter,
+        "standoff_b_over_D": standoff_b / diameter,
+        "standoff_difference_over_D": abs(standoff_a - standoff_b) / diameter,
         "common_theta_min_degrees": np.degrees(np.min(limit)),
         "common_theta_mean_degrees": np.degrees(np.mean(limit)),
         "common_theta_max_degrees": np.degrees(np.max(limit)),
@@ -207,21 +186,22 @@ def compare_refinement_surfaces(
         }
         if len(surfaces) < 2:
             continue
-        limit = shared_polar_limit(
+        limit = shared_theta_limit(
             list(surfaces.values()),
             axis_origin=body_origin,
             streamwise=streamwise,
         )
-        for level_a, level_b in zip(levels[:-1], levels[1:]):
+        comparisons = [*zip(levels[:-1], levels[1:]), (levels[0], levels[-1])]
+        for level_a, level_b in comparisons:
             if level_a not in surfaces or level_b not in surfaces:
                 continue
-            metrics = common_polar_metrics(
+            metrics = common_surface_metrics(
                 surfaces[level_a],
                 surfaces[level_b],
                 diameter,
                 axis_origin=body_origin,
                 streamwise=streamwise,
-                polar_limit=limit,
+                theta_limit=limit,
             )
             rows.append(
                 {
@@ -231,7 +211,9 @@ def compare_refinement_surfaces(
                     "case_b": f"{mach}_{level_b}",
                     "mesh_level_b": level_b,
                     "comparison": f"{level_a}-{level_b}",
-                    "is_adjacent": "true",
+                    "is_adjacent": str(
+                        levels.index(level_b) - levels.index(level_a) == 1
+                    ).lower(),
                     "status": "ok",
                     **metrics,
                 }
@@ -242,10 +224,7 @@ def compare_refinement_surfaces(
                 f"stand-off/D = "
                 f"{metrics['standoff_difference_over_D']:.6g}"
             )
-    with output_path.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=rows[0])
-        writer.writeheader()
-        writer.writerows(rows)
+    write_csv(output_path, rows)
     print(f"wrote {output_path}")
     return rows
 
@@ -257,24 +236,21 @@ def compare_surface_pair(
     diameter=5.0,
     theta_limit_degrees=None,
 ):
-    polar_limit = None
+    theta_limit = None
     if theta_limit_degrees is not None:
-        polar_limit = np.full(360, np.radians(theta_limit_degrees))
-    metrics = common_polar_metrics(
+        theta_limit = np.full(360, np.radians(theta_limit_degrees))
+    metrics = common_surface_metrics(
         pv.read(surface_a_path),
         pv.read(surface_b_path),
         diameter=diameter,
-        polar_limit=polar_limit,
+        theta_limit=theta_limit,
     )
     row = {
         "surface_a": str(surface_a_path),
         "surface_b": str(surface_b_path),
         **metrics,
     }
-    with Path(output_path).open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=row)
-        writer.writeheader()
-        writer.writerow(row)
+    write_csv(output_path, [row])
     print(f"RMS/D = {metrics['common_rms_over_D']:.6g}")
     print(f"stand-off/D = {metrics['standoff_difference_over_D']:.6g}")
     print(f"wrote {output_path}")

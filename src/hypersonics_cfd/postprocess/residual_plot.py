@@ -12,23 +12,26 @@ import numpy as np
 from hypersonics_cfd.study import get_study_paths
 
 
-FIELDS = (
+FLOW_FIELDS = (
     "rms[Rho]",
     "rms[RhoU]",
     "rms[RhoV]",
     "rms[RhoW]",
     "rms[RhoE]",
-    "rms[nu]",
 )
 
-LABELS = (
+FLOW_LABELS = (
     r"$\rho$",
     r"$\rho u$",
     r"$\rho v$",
     r"$\rho w$",
     r"$\rho E$",
-    r"$\tilde{\nu}$",
 )
+
+SA_FIELDS = (*FLOW_FIELDS, "rms[nu]")
+SA_LABELS = (*FLOW_LABELS, r"$\tilde{\nu}$")
+SST_FIELDS = (*FLOW_FIELDS, "rms[k]", "rms[w]")
+SST_LABELS = (*FLOW_LABELS, r"$k$", r"$\omega$")
 
 
 @dataclass
@@ -36,6 +39,7 @@ class Segment:
     path: Path
     iteration: np.ndarray
     residuals: np.ndarray
+    labels: tuple[str, ...]
 
 
 def read_history(path: Path) -> Segment:
@@ -43,9 +47,10 @@ def read_history(path: Path) -> Segment:
         rows = list(csv.reader(file))
     names = [name.strip().strip('"') for name in rows[0]]
     iteration_index = names.index("Inner_Iter")
-    field_indexes = [names.index(field) for field in FIELDS]
+    fields, labels = (SST_FIELDS, SST_LABELS) if "rms[k]" in names else (SA_FIELDS, SA_LABELS)
+    field_indexes = [names.index(field) for field in fields]
     values = np.asarray(rows[1:], dtype=float)
-    return Segment(path, values[:, iteration_index], values[:, field_indexes])
+    return Segment(path, values[:, iteration_index], values[:, field_indexes], labels)
 
 
 def read_solver_log(path: Path) -> Segment:
@@ -53,12 +58,17 @@ def read_solver_log(path: Path) -> Segment:
     for line in path.read_text(errors="ignore").splitlines():
         if re.match(r"^\|\s*\d+\|", line):
             values = [value.strip() for value in line.split("|")[1:-1]]
-            rows.append([float(values[0]), *map(float, values[2:8])])
-    values = np.asarray(rows).reshape((-1, 7))
-    return Segment(path, values[:, 0], values[:, 1:])
+            rows.append([float(values[0]), *map(float, values[2:-1])])
+    if not rows:
+        return Segment(path, np.empty(0), np.empty((0, len(SA_LABELS))), SA_LABELS)
+    values = np.asarray(rows)
+    labels = SST_LABELS if values.shape[1] == 8 else SA_LABELS
+    return Segment(path, values[:, 0], values[:, 1:], labels)
 
 
 def same_start(a: Segment, b: Segment) -> bool:
+    if a.residuals.shape[1] != b.residuals.shape[1]:
+        return False
     return np.max(np.abs(a.residuals[0] - b.residuals[0])) < 0.002
 
 
@@ -103,7 +113,7 @@ def plot_residuals(case_dir: Path, output: Path) -> None:
 
     for segment in chain:
         iteration = segment.iteration - segment.iteration[0] + offset
-        for index, label in enumerate(LABELS):
+        for index, label in enumerate(segment.labels):
             axis.plot(
                 iteration,
                 segment.residuals[:, index],
