@@ -7,8 +7,8 @@ import time
 from hypersonics_cfd.study import get_study_paths
 
 from .comparison import (
-    common_polar_metrics,
-    shared_polar_limit,
+    common_surface_metrics,
+    shared_theta_limit,
     stagnation_standoff,
 )
 from .extraction import extract_prepared_surface, prepare_shock_field
@@ -69,12 +69,12 @@ def run_shock_extraction_convergence(case_name="m6_medium", study_name="orion"):
         writer.writerows(run_rows)
 
     sweep_limits = {
-        "dn": shared_polar_limit(
+        "dn": shared_theta_limit(
             [surfaces[label] for label in SETTINGS if label.startswith("dt0p10_")],
             axis_origin=prepared.body_anchor,
             streamwise=prepared.streamwise,
         ),
-        "dt": shared_polar_limit(
+        "dt": shared_theta_limit(
             [surfaces[label] for label in SETTINGS if label.endswith("_dn0p010")],
             axis_origin=prepared.body_anchor,
             streamwise=prepared.streamwise,
@@ -84,12 +84,12 @@ def run_shock_extraction_convergence(case_name="m6_medium", study_name="orion"):
     for sweep, setting, reference in COMPARISONS:
         dt, dn = SETTINGS[setting]
         reference_dt, reference_dn = SETTINGS[reference]
-        metrics = common_polar_metrics(
+        metrics = common_surface_metrics(
             surfaces[setting],
             surfaces[reference],
             axis_origin=prepared.body_anchor,
             streamwise=prepared.streamwise,
-            polar_limit=sweep_limits[sweep],
+            theta_limit=sweep_limits[sweep],
         )
         comparison_rows.append(
             {

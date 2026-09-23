@@ -19,7 +19,7 @@ from hypersonics_cfd.study import (
     get_study_paths,
 )
 
-from .setup import load_case_setup, stage_case
+from .setup import load_case_setup, render_template, stage_case
 from .slurm import (
     add_afterany_dependency,
     add_afterok_dependency,
@@ -261,7 +261,12 @@ def choose_workflow_steps() -> tuple[bool, bool, bool, bool, bool, bool, str]:
     return run_solver, True, run_yplus, run_mirror, run_slices, run_shock, flow_file
 
 
-def build_solver_command(paths: StudyPaths, spec: dict[str, object], case_dir: Path) -> list[str]:
+def build_solver_command(
+    paths: StudyPaths,
+    spec: dict[str, object],
+    case_dir: Path,
+    config_path: Path | None = None,
+) -> list[str]:
     case_name = str(spec["case_name"])
     return [
         "sbatch",
@@ -288,8 +293,20 @@ def build_solver_command(paths: StudyPaths, spec: dict[str, object], case_dir: P
         "--chdir",
         str(case_dir),
         str(paths.run_case_script),
-        str(paths.generated_config_path(case_name)),
+        str(config_path or paths.generated_config_path(case_name)),
     ]
+
+
+def write_restart_config(
+    paths: StudyPaths,
+    spec: dict[str, object],
+    template_text: str,
+) -> Path:
+    restart_spec = dict(spec)
+    restart_spec["restart_sol"] = "YES"
+    path = paths.generated_config_dir / f"{spec['case_name']}.restart.cfg"
+    path.write_text(render_template(template_text, restart_spec) + "\n", encoding="utf-8")
+    return path
 
 
 def cumulative_iterations(case_dir: Path) -> int:
@@ -334,9 +351,9 @@ def build_checkpoint_command(
         str(paths.repo_root),
         str(paths.repo_root / "templates" / "slurm" / "archive_continuation_checkpoint.sh"),
         str(case_dir),
+        "" if base_iteration is None else str(base_iteration),
+        str(spec["cfl_number"]),
     ]
-    if base_iteration is not None:
-        command.append(str(base_iteration))
     return command
 
 
@@ -630,12 +647,16 @@ def main() -> int:
             continue
 
         if run_solver and solver_can_be_submitted(spec, case_dir, resubmit_existing):
+            restart_config = paths.generated_config_dir / f"{case_name}.restart.cfg"
             if submit_jobs:
                 stage_case(paths, spec, template_text)
+                if args.continuations > 1:
+                    restart_config = write_restart_config(paths, spec, template_text)
                 paths.ensure_case_runtime_dirs(case_name)
             base_iteration = cumulative_iterations(case_dir) if args.continuations > 1 else None
             for run_index in range(1, args.continuations + 1):
-                solver_command = build_solver_command(paths, spec, case_dir)
+                config_path = paths.generated_config_path(case_name) if run_index == 1 else restart_config
+                solver_command = build_solver_command(paths, spec, case_dir, config_path)
                 solver_command = add_afterok_dependency(solver_command, dependencies)
                 solver_job = submit_or_print(
                     solver_command,

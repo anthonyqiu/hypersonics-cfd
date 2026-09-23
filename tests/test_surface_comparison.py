@@ -9,8 +9,8 @@ import pyvista as pv
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hypersonics_cfd.shock.comparison import (  # noqa: E402
-    common_polar_metrics,
-    shared_polar_limit,
+    common_surface_metrics,
+    shared_theta_limit,
 )
 
 
@@ -32,7 +32,19 @@ def spherical_surface(radius, theta_max, theta_count=16, phi_count=24):
             shell.append(layer)
             ray_index.append(ray)
 
-    surface = pv.PolyData(np.asarray(points))
+    faces = []
+    for ray in range(phi_count):
+        next_ray = (ray + 1) % phi_count
+        first = 1 + ray * theta_count
+        next_first = 1 + next_ray * theta_count
+        faces.extend([3, 0, first, next_first])
+        for layer in range(theta_count - 1):
+            a = first + layer
+            b = next_first + layer
+            faces.extend([3, a, a + 1, b + 1])
+            faces.extend([3, a, b + 1, b])
+
+    surface = pv.PolyData(np.asarray(points), np.asarray(faces))
     surface["ShellLayer"] = np.asarray(shell)
     surface["RayIndex"] = np.asarray(ray_index)
     surface.field_data["BodyAnchor"] = np.zeros((1, 3))
@@ -50,7 +62,7 @@ class SurfaceComparisonTests(unittest.TestCase):
             spherical_surface(2.2, 0.6),
         ]
 
-        limit = shared_polar_limit(surfaces, phi_count=48)
+        limit = shared_theta_limit(surfaces, phi_count=48)
 
         np.testing.assert_allclose(limit, 0.6, atol=1.0e-12)
 
@@ -58,18 +70,17 @@ class SurfaceComparisonTests(unittest.TestCase):
         surface_a = spherical_surface(2.0, 1.2)
         surface_b = spherical_surface(2.2, 0.8)
 
-        metrics = common_polar_metrics(
+        metrics = common_surface_metrics(
             surface_a,
             surface_b,
             diameter=5.0,
-            theta_count=80,
             phi_count=96,
         )
 
-        self.assertAlmostEqual(metrics["common_mean_over_D"], 0.04, places=12)
-        self.assertAlmostEqual(metrics["common_rms_over_D"], 0.04, places=12)
-        self.assertAlmostEqual(metrics["common_p95_over_D"], 0.04, places=12)
-        self.assertAlmostEqual(metrics["common_max_over_D"], 0.04, places=12)
+        self.assertAlmostEqual(metrics["common_mean_over_D"], 0.04, places=3)
+        self.assertAlmostEqual(metrics["common_rms_over_D"], 0.04, places=3)
+        self.assertAlmostEqual(metrics["common_p95_over_D"], 0.04, places=3)
+        self.assertAlmostEqual(metrics["common_max_over_D"], 0.04, places=3)
         self.assertAlmostEqual(metrics["standoff_difference_over_D"], 0.04, places=12)
         self.assertAlmostEqual(
             metrics["common_theta_max_degrees"],

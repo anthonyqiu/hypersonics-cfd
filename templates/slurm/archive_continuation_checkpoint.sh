@@ -3,6 +3,7 @@ set -euo pipefail
 
 case_dir="$1"
 base_iteration="${2:-}"
+cfl_number="${3:-0.005}"
 state_file="$case_dir/cumulative_iteration.txt"
 
 if [[ -z "$base_iteration" ]]; then
@@ -11,7 +12,8 @@ fi
 
 local_iteration="$(tail -n 1 "$case_dir/history.csv" | cut -d, -f3 | tr -d ' ')"
 total_iteration="$((base_iteration + local_iteration))"
-checkpoint_dir="$case_dir/checkpoints/iter_${total_iteration}_cfl0p005"
+cfl_token="${cfl_number//./p}"
+checkpoint_dir="$case_dir/checkpoints/iter_${total_iteration}_cfl${cfl_token}"
 
 mkdir -p "$checkpoint_dir"
 cp --reflink=auto "$case_dir/history.csv" "$case_dir/flow.vtu" "$case_dir/restart_flow.dat" "$checkpoint_dir/"
